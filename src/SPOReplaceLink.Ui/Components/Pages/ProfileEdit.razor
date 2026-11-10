@@ -1,0 +1,436 @@
+﻿@page "/profiles/{Name}"
+@* GUI-16…GUI-20, GUI-24, GUI-26, GUI-27, THR-11: everything a run needs, edited in tabs, validated on save. *@
+@inject SettingsService Settings
+@inject RunService Runs
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IFileSaver Saver
+
+<PageTitle>@L.F("Профіль {0}", Name) — SPOReplaceLink</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-3">
+    <MudLink Href="profiles">@L.T("← профілі")</MudLink>
+    <MudText Typo="Typo.h5">@(IsNew ? L.T("Новий профіль") : L.F("Профіль «{0}»", Name))</MudText>
+    <HelpButton Section="33-профіль" />
+    <MudSpacer />
+    @if (!IsNew)
+    {
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Download" OnClick="ExportJson">JSON</MudButton>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="Run">@L.T("Запустити…")</MudButton>
+    }
+    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.FactCheck" OnClick="Validate">@L.T("Перевірити")</MudButton>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Save">@L.T("Зберегти")</MudButton>
+</MudStack>
+
+@if (_issues is not null)
+{
+    int errors = _issues.Count(i => i.Severity == IssueSeverity.Error);
+    @if (errors > 0)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@L.F("Помилок: {0} — їх позначено на вкладках і біля полів. Прогін не запуститься, доки їх не виправлено.", errors)</MudAlert>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Success" Dense="true" Class="mb-3">@L.T("Помилок немає")@(_issues.Count > 0 ? L.F(", попереджень: {0}", _issues.Count) : "").</MudAlert>
+    }
+    <IssueList Issues="IssuesOf(Section.Other)" ShowOk="false" />
+}
+
+<MudTabs Elevation="1" Rounded="true" PanelClass="pa-4" @bind-ActivePanelIndex="_tab">
+    <MudTabPanel Text="@L.T("Загальне і правила")" BadgeData="@Badge(Section.General)" BadgeColor="Color.Error">
+        <div class="d-flex justify-end"><HelpButton Section="вкладка-загальне-і-правила" Text="@L.T("Що означають ці поля")" /></div>
+        <IssueList Issues="IssuesOf(Section.General)" ShowOk="false" />
+        <MudGrid Spacing="2">
+            @if (IsNew)
+            {
+                <MudItem xs="12" md="4"><MudTextField T="string" Label="@L.T("Назва")" @bind-Value="_name" Required="true" /></MudItem>
+            }
+            <MudItem xs="12" md="@(IsNew ? 8 : 12)">
+                <MudTextField T="string" Label="baseHost" @bind-Value="_p.BaseHost" Error="@FieldError("baseHost")" ErrorText="@FieldMessage("baseHost")" Placeholder="https://tenant.sharepoint.com" Immediate="true" DebounceInterval="400"
+                              HelperText="@L.T("Для правил і посилань без хоста (/sites/…, /Document/…)")" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudSelect T="string" Label="@L.T("Шаблони правил (GUI-24: правила шаблонів і власні перевіряються разом)")" MultiSelection="true"
+                           SelectedValues="_p.Templates" SelectedValuesChanged="v => { _p.Templates = v.ToList(); LoadTemplateRules(); }">
+                    @foreach (var (t, _) in Settings.List(SettingKinds.Template))
+                    {
+                        <MudSelectItem Value="@t">@t</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+        @if (_templateRules.Count > 0)
+        {
+            <MudExpansionPanels Class="mt-3" Elevation="0">
+                <MudExpansionPanel Text="@L.F("Правила з шаблонів: {0}", _templateRules.Count)">
+                    <RulesEditor Rules="_templateRules" BaseHost="@_p.BaseHost" ReadOnly="true" />
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+        <MudText Typo="Typo.subtitle1" Class="mt-4">@L.T("Власні правила профілю")</MudText>
+        <RulesEditor Rules="_p.Rules" Preceding="_templateRules" BaseHost="@_p.BaseHost" />
+    </MudTabPanel>
+
+    <MudTabPanel Text="@L.T("Цілі")" BadgeData="@Badge(Section.Targets)" BadgeColor="Color.Error">
+        <div class="d-flex justify-end"><HelpButton Section="вкладка-цілі" Text="@L.T("Що означають ці поля")" /></div>
+        <IssueList Issues="IssuesOf(Section.Targets)" ShowOk="false" />
+        @if (_estimate is { } e)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2">@L.F("Кількість файлів — за переліком прогону {0} від {1}.", e.RunId, Ui.Time(e.At))</MudAlert>
+        }
+        <MudTable Items="_p.Targets" Dense="true" T="Target">
+            <HeaderContent><MudTh>@L.T("Сайт")</MudTh><MudTh>@L.T("Бібліотека")</MudTh><MudTh>@L.T("Папка")</MudTh><MudTh>@L.T("Стара адреса")</MudTh><MudTh>@L.T("Файлів ≈")</MudTh><MudTh></MudTh></HeaderContent>
+            <RowTemplate>
+                @{ int index = _p.Targets.IndexOf(context); }
+                <MudTd Class="wrap-anywhere">@context.SiteUrl
+                    @foreach (var issue in IssuesOf(Section.Targets).Where(i => i.Message.StartsWith($"targets[{index + 1}]", StringComparison.Ordinal)))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error" Class="d-block">@issue.Message</MudText>
+                    }
+                </MudTd>
+                <MudTd>@context.Library</MudTd>
+                <MudTd>@(string.IsNullOrEmpty(context.Folder) ? L.T("уся бібліотека") : context.Folder)</MudTd>
+                <MudTd Class="wrap-anywhere">@(context.OldLocation ?? L.T("— (з правил)"))</MudTd>
+                <MudTd>@(_estimate is { } est && index < est.FilesPerTarget.Count ? Ui.N(est.FilesPerTarget[index]) : L.T("невідомо"))</MudTd>
+                <MudTd Class="nowrap">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" OnClick="() => EditTarget(context)" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="() => _p.Targets.Remove(context)" />
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>@L.T("Цілей немає.")</NoRecordsContent>
+        </MudTable>
+        <MudButton Class="mt-2" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="() => EditTarget(null)">@L.T("Додати ціль")</MudButton>
+    </MudTabPanel>
+
+    <MudTabPanel Text="@L.T("Фільтри")" BadgeData="@Badge(Section.Filters)" BadgeColor="Color.Error">
+        <div class="d-flex justify-end"><HelpButton Section="вкладка-фільтри" Text="@L.T("Що означають ці поля")" /></div>
+        <IssueList Issues="IssuesOf(Section.Filters)" ShowOk="false" />
+        <MudGrid Spacing="2">
+            <MudItem xs="12">
+                <MudText Typo="Typo.subtitle2">@L.T("Розширення")</MudText>
+                @foreach (var ext in FileFilters.SupportedExtensions)
+                {
+                    <MudCheckBox T="bool" Value="_p.Filters.Extensions.Contains(ext, StringComparer.OrdinalIgnoreCase)" Label="@ext"
+                                 ValueChanged="on => { _p.Filters.Extensions.RemoveAll(x => string.Equals(x, ext, StringComparison.OrdinalIgnoreCase)); if (on) _p.Filters.Extensions.Add(ext); }" />
+                }
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField T="string" Label="@L.T("Включати лише шляхи (маска на рядок, * ** ?)")" Lines="4" Value="@string.Join("\n", _p.Filters.Include)"
+                              ValueChanged="v => _p.Filters.Include = Lines(v)" HelperText="@L.T("Відносно цілі, напр. Fin/**")" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField T="string" Label="@L.T("Виключати шляхи (маска на рядок)")" Lines="4" Value="@string.Join("\n", _p.Filters.Exclude)"
+                              ValueChanged="v => _p.Filters.Exclude = Lines(v)" HelperText="@L.T("Напр. **/Архів/**")" />
+            </MudItem>
+            <MudItem xs="6" md="2"><MudNumericField T="int" Label="@L.T("Розмір від, КБ")" @bind-Value="_p.Filters.MinFileSizeKb" Min="0" HelperText="@L.T("0 — без обмеження")" /></MudItem>
+            <MudItem xs="6" md="2"><MudNumericField T="int" Label="@L.T("Розмір до, МБ")" @bind-Value="_p.Filters.MaxFileSizeMb" Min="0" HelperText="@L.T("0 — без обмеження")" /></MudItem>
+            <MudItem xs="6" md="4">
+                <MudDatePicker Label="@L.T("Змінені з")"Date="_p.Filters.ModifiedAfter?.LocalDateTime" DateChanged="d => _p.Filters.ModifiedAfter = d is { } v ? new DateTimeOffset(v) : null" Clearable="true" />
+            </MudItem>
+            <MudItem xs="6" md="4">
+                <MudDatePicker Label="@L.T("Змінені до")"Date="_p.Filters.ModifiedBefore?.LocalDateTime" DateChanged="d => _p.Filters.ModifiedBefore = d is { } v ? new DateTimeOffset(v) : null" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudButton Variant="Variant.Outlined" OnClick="Estimate" StartIcon="@Icons.Material.Filled.Calculate">@L.T("Порахувати файли за даними останнього переліку")</MudButton>
+                @if (_estimate is { } est2)
+                {
+                    <MudText Class="mt-2">@((MarkupString)L.F("Під фільтри підпадає <b>{0}</b> з {1} файлів Excel (прогін {2}).", Ui.N(est2.PassingFilters), Ui.N(est2.Total), est2.RunId))</MudText>
+                }
+                else if (_estimated)
+                {
+                    <MudText Class="mt-2" Typo="Typo.caption">@L.T("Переліку ще не було: запустіть inventory або scan за цим профілем.")</MudText>
+                }
+            </MudItem>
+        </MudGrid>
+    </MudTabPanel>
+
+    <MudTabPanel Text="@L.T("Місця заміни")" BadgeData="@Badge(Section.Places)" BadgeColor="Color.Error">
+        <div class="d-flex justify-end"><HelpButton Section="вкладка-місця-заміни" Text="@L.T("Що означають ці поля")" /></div>
+        <IssueList Issues="IssuesOf(Section.Places)" ShowOk="false" />
+        <MudSimpleTable Dense="true">
+            <thead><tr><th>@L.T("Місце")</th><th>xlsx / xlsm</th><th>xlsb</th><th>xls</th><th>@L.T("Увімкнено")</th></tr></thead>
+            <tbody>
+                <tr><td>@L.T("Hyperlinks (гіперпосилання на клітинках і фігурах)")</td><td>@L.T("так")</td><td>@L.T("так")</td><td>@L.T("через Excel")</td><td><MudSwitch T="bool" @bind-Value="_p.Places.Hyperlinks" Color="Color.Primary" /></td></tr>
+                <tr><td>@L.T("Link Sources (зовнішні книги, Edit Links)")</td><td>@L.T("так")</td><td>@L.T("так")</td><td>@L.T("через Excel")</td><td><MudSwitch T="bool" @bind-Value="_p.Places.LinkSources" Color="Color.Primary" /></td></tr>
+                <tr><td>@L.T("Формули (HYPERLINK, INDIRECT) і їхні кешовані значення")</td><td>@L.T("так")</td><td>@L.T("через Excel")</td><td>@L.T("через Excel")</td><td><MudSwitch T="bool" @bind-Value="_p.Places.Formulas" Color="Color.Primary" /></td></tr>
+                <tr><td>@L.T("Інші зовнішні зв'язки (OLE, пов'язані зображення)")</td><td>@L.T("так")</td><td>@L.T("так")</td><td>@L.T("через Excel")</td><td><MudSwitch T="bool" @bind-Value="_p.Places.OtherExternal" Color="Color.Primary" /></td></tr>
+                <tr><td>@L.T("Pivot-кеші")</td><td colspan="3">@L.T("ще не реалізовано")</td><td><MudSwitch T="bool" Value="false" Disabled="true" /></td></tr>
+                <tr><td>@L.T("Підключення до даних (connections)")</td><td colspan="3">@L.T("ще не реалізовано")</td><td><MudSwitch T="bool" Value="false" Disabled="true" /></td></tr>
+                <tr><td>Power Query</td><td colspan="3">@L.T("ще не реалізовано")</td><td><MudSwitch T="bool" Value="false" Disabled="true" /></td></tr>
+                <tr><td>@L.T("Текст клітинок")</td><td colspan="3">@L.T("ще не реалізовано")</td><td><MudSwitch T="bool" Value="false" Disabled="true" /></td></tr>
+            </tbody>
+        </MudSimpleTable>
+        <MudText Typo="Typo.caption" Class="mt-2 d-block">@L.T("Старі префікси в місцях, які не змінюються, однаково знаходяться і потрапляють у звіт залишків.")</MudText>
+    </MudTabPanel>
+
+    <MudTabPanel Text="@L.T("Продуктивність")" BadgeData="@Badge(Section.Performance)" BadgeColor="Color.Error">
+        <div class="d-flex justify-end"><HelpButton Section="вкладка-продуктивність" Text="@L.T("Що означають ці поля")" /></div>
+        <IssueList Issues="IssuesOf(Section.Performance)" ShowOk="false" />
+        <MudStack Row="true" Spacing="2" Class="mb-3" Wrap="Wrap.Wrap">
+            <MudText Typo="Typo.subtitle2">@L.T("Пресети:")</MudText>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="() => Preset(1)">@L.T("Обережно")</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="() => Preset(2)">@L.T("Стандарт")</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="() => Preset(3)">@L.T("Неробочий час")</MudButton>
+        </MudStack>
+        <MudGrid Spacing="2">
+            <MudItem xs="6" md="2"><MudNumericField T="int" Label="@L.T("Завантажень одночасно")" @bind-Value="_p.Performance.Downloads" Min="1" Max="64" /></MudItem>
+            <MudItem xs="6" md="2"><MudNumericField T="int" Label="@L.T("Обробників (CPU)")" @bind-Value="_p.Performance.Processors" Min="1" Max="64" /></MudItem>
+            <MudItem xs="6" md="2"><MudNumericField T="int" Label="@L.T("Вивантажень одночасно")" @bind-Value="_p.Performance.Uploads" Min="1" Max="64" /></MudItem>
+            <MudItem xs="6" md="2"><MudNumericField T="int" Label="@L.T("Бюджет RU, % ліміту")" @bind-Value="_p.Performance.BudgetPercent" Min="1" Max="100" /></MudItem>
+            <MudItem xs="6" md="2"><MudNumericField T="int" Label="@L.T("Таймаут запиту, с")" @bind-Value="_p.Performance.RequestTimeoutSeconds" Min="5" /></MudItem>
+            <MudItem xs="6" md="2"><MudNumericField T="int" Label="@L.T("Таймаут файлу, хв")" @bind-Value="_p.Performance.FileTimeoutMinutes" Min="1" /></MudItem>
+            <MudItem xs="6" md="3"><MudNumericField T="int" Label="@L.T("Простий запис до, МБ (більше — частинами)")" @bind-Value="_p.Performance.SimpleUploadMaxMb" Min="1" Max="250" /></MudItem>
+            <MudItem xs="6" md="2"><MudNumericField T="int" Label="@L.T("Процесів Excel (0 — без Excel)")" @bind-Value="_p.Performance.ExcelProcesses" Min="0" Max="16"
+                                                    HelperText="@L.T("xls і залишки xlsb")" /></MudItem>
+            <MudItem xs="6" md="2"><MudNumericField T="int" Label="@L.T("Таймаут Excel, хв")" @bind-Value="_p.Performance.ExcelTimeoutMinutes" Min="1" Max="120"
+                                                    HelperText="@L.T("далі Excel завершується")" /></MudItem>
+            <MudItem xs="12" md="5">
+                <MudSelect T="string" Label="@L.T("Часовий пояс вікон")"@bind-Value="_p.Performance.TimeZone" Clearable="true">
+                    @foreach (var tz in TimeZoneInfo.GetSystemTimeZones())
+                    {
+                        <MudSelectItem Value="@tz.Id">@tz.DisplayName</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="4"><MudSwitch T="bool" @bind-Value="_p.Performance.OnlyInWindows" Label="@L.T("Працювати лише у вікнах")" Color="Color.Primary" /></MudItem>
+        </MudGrid>
+        <MudText Typo="Typo.subtitle2" Class="mt-3">@L.T("Вікна роботи (THR-5)")</MudText>
+        @foreach (var w in _p.Performance.Windows)
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-1">
+                <MudSelect T="string" Label="@L.T("Дні")"MultiSelection="true" SelectedValues="w.Days" SelectedValuesChanged="v => w.Days = v.ToList()" Style="min-width:220px" Margin="Margin.Dense">
+                    @foreach (var d in Days)
+                    {
+                        <MudSelectItem Value="@d">@d</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudTextField T="string" Label="@L.T("З")" @bind-Value="w.From" Style="width:90px" Margin="Margin.Dense" />
+                <MudTextField T="string" Label="@L.T("До")" @bind-Value="w.To" Style="width:90px" Margin="Margin.Dense" />
+                <MudNumericField T="int" Label="@L.T("Бюджет, %")"@bind-Value="w.BudgetPercent" Min="1" Max="100" Style="width:110px" Margin="Margin.Dense" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" OnClick="() => _p.Performance.Windows.Remove(w)" />
+            </MudStack>
+        }
+        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Add" OnClick="AddWindow">@L.T("Додати вікно")</MudButton>
+    </MudTabPanel>
+
+    <MudTabPanel Text="@L.T("Повтори")" BadgeData="@Badge(Section.Retry)" BadgeColor="Color.Error">
+        <div class="d-flex justify-end"><HelpButton Section="вкладка-повтори" Text="@L.T("Що означають ці поля")" /></div>
+        <IssueList Issues="IssuesOf(Section.Retry)" ShowOk="false" />
+        <MudGrid Spacing="2">
+            <MudItem xs="6" md="3"><MudNumericField T="int" Label="@L.T("Спроб одного запиту")" @bind-Value="_p.Retry.RequestAttempts" Min="1" Max="20" /></MudItem>
+            <MudItem xs="6" md="3"><MudNumericField T="int" Label="@L.T("Спроб одного файлу")" @bind-Value="_p.Retry.FileAttempts" Min="1" Max="20" /></MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField T="string" Label="@L.T("Паузи між спробами файлу, хв (через кому)")"Value="@string.Join(", ", _p.Retry.FilePausesMinutes.Select(x => x.ToString(CultureInfo.InvariantCulture)))"
+                              ValueChanged="v => _p.Retry.FilePausesMinutes = Numbers(v)" />
+            </MudItem>
+            <MudItem xs="6" md="3"><MudNumericField T="double" Label="@L.T("Хвиля заблокованих, хв")" @bind-Value="_p.Retry.LockedWaveMinutes" Min="0.1" /></MudItem>
+            <MudItem xs="6" md="3"><MudNumericField T="double" Label="@L.T("Чекати заблоковані, хв")" @bind-Value="_p.Retry.LockedLimitMinutes" Min="0" /></MudItem>
+            <MudItem xs="6" md="3"><MudNumericField T="int" Label="@L.T("Запобіжник: останніх файлів")" @bind-Value="_p.Retry.BreakerWindow" Min="1" /></MudItem>
+            <MudItem xs="6" md="3"><MudNumericField T="double" Label="@L.T("Запобіжник: частка помилок")" @bind-Value="_p.Retry.BreakerFailureRatio" Min="0.01" Max="1" Step="0.05" /></MudItem>
+            <MudItem xs="6" md="3"><MudNumericField T="int" Label="@L.T("Помилок доступу поспіль до зупинки")" @bind-Value="_p.Retry.AuthFailuresToStop" Min="1" /></MudItem>
+            <MudItem xs="6" md="3"><MudNumericField T="double" Label="@L.T("Лише 503 стільки хв — блокування")" @bind-Value="_p.Retry.BlockedMinutes" Min="0.1" /></MudItem>
+        </MudGrid>
+    </MudTabPanel>
+
+    <MudTabPanel Text="@L.T("Підключення")" BadgeData="@Badge(Section.Connections)" BadgeColor="Color.Error">
+        <div class="d-flex justify-end"><HelpButton Section="вкладка-підключення" Text="@L.T("Що означають ці поля")" /></div>
+        <IssueList Issues="IssuesOf(Section.Connections)" ShowOk="false" />
+        <MudSelect T="string" Label="@L.T("Підключення")"MultiSelection="true" SelectedValues="_p.Connections" SelectedValuesChanged="ConnectionsChanged">
+            @foreach (var (c, _) in Settings.List(SettingKinds.Connection))
+            {
+                <MudSelectItem Value="@c">@c</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSwitch T="bool" Value="_p.Pool.Enabled" ValueChanged="PoolChanged" Label="@L.T("Пул застосунків (кілька підключень в одному прогоні)")" Color="Color.Warning" Class="mt-3" />
+        @if (_p.Pool.Enabled)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-2">
+                @L.T("Microsoft не рекомендує кілька застосунків для однієї задачі: усі вони ділять тенантний бюджет з користувачами й іншими застосунками (бекап, міграція). Сумарне навантаження пулу обмежене стелею нижче.")
+            </MudAlert>
+            <MudNumericField T="int" Label="@L.T("Стеля тенантного бюджету, %")" @bind-Value="_p.Pool.TenantCeilingPercent" Min="1" Max="100" Class="mt-2" Style="max-width:260px" />
+        }
+        @if (_p.Connections.Count > 1 && !_p.Pool.Enabled)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-2">@L.T("Кілька підключень працюють лише з увімкненим пулом.")</MudAlert>
+        }
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    [Parameter] public string Name { get; set; } = string.Empty;
+
+    private static readonly string[] Days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+    private bool IsNew => Name == "~new";
+
+    private enum Section { General, Targets, Filters, Places, Performance, Retry, Connections, Other }
+
+    /// <summary>GUI-27: which tab an issue belongs to, by the setting it names. Rule issues are shown next to the rule.</summary>
+    private static Section SectionOf(ValidationIssue i)
+    {
+        string m = i.Message;
+        if (i.RuleIndex is not null)
+            return Section.General;
+        if (m.StartsWith("targets", StringComparison.Ordinal))
+            return Section.Targets;
+        if (m.StartsWith("filters", StringComparison.Ordinal))
+            return Section.Filters;
+        if (m.StartsWith("places", StringComparison.Ordinal))
+            return Section.Places;
+        if (m.StartsWith("performance", StringComparison.Ordinal))
+            return Section.Performance;
+        if (m.StartsWith("retry", StringComparison.Ordinal))
+            return Section.Retry;
+        // The messages come from the profile validation, in Ukrainian or translated: match both languages.
+        if (m.StartsWith("connections", StringComparison.Ordinal) || m.StartsWith("pool", StringComparison.Ordinal) || m.StartsWith("Підключення", StringComparison.Ordinal) // i18n-ignore: matches validation text
+            || m.StartsWith("Кілька підключень", StringComparison.Ordinal) || m.StartsWith("Увімкнено пул", StringComparison.Ordinal) // i18n-ignore: matches validation text
+            || m.StartsWith("Connection", StringComparison.OrdinalIgnoreCase) || m.Contains("connections", StringComparison.OrdinalIgnoreCase)
+            || m.Contains("pool", StringComparison.OrdinalIgnoreCase))
+            return Section.Connections;
+        if (m.Contains("baseHost", StringComparison.Ordinal) || m.Contains("шаблон", StringComparison.OrdinalIgnoreCase) || m.Contains("правил", StringComparison.OrdinalIgnoreCase) // i18n-ignore: matches validation text
+            || m.Contains("template", StringComparison.OrdinalIgnoreCase) || m.Contains("rule", StringComparison.OrdinalIgnoreCase))
+            return Section.General;
+        return Section.Other;
+    }
+
+    // Rule issues are already shown in the rules table; here only the rest.
+    private IReadOnlyList<ValidationIssue> IssuesOf(Section s) =>
+        (_issues ?? []).Where(i => SectionOf(i) == s && i.RuleIndex is null).ToList();
+
+    private object? Badge(Section s)
+    {
+        int n = (_issues ?? []).Count(i => SectionOf(i) == s && i.Severity == IssueSeverity.Error);
+        return n > 0 ? n : null;
+    }
+
+    private bool FieldError(string field) => (_issues ?? []).Any(i => i.Severity == IssueSeverity.Error && i.Message.Contains(field, StringComparison.Ordinal));
+
+    private string? FieldMessage(string field) => (_issues ?? []).FirstOrDefault(i => i.Message.Contains(field, StringComparison.Ordinal))?.Message;
+    private Profile _p = new();
+    private string? _name;
+    private List<RuleEntry> _templateRules = [];
+    private IReadOnlyList<ValidationIssue>? _issues;
+    private ProfileInsights.Estimate? _estimate;
+    private bool _estimated;
+    private int _tab;
+
+    protected override void OnParametersSet()
+    {
+        _p = IsNew ? new Profile() : Settings.GetProfile(Name) ?? new Profile { Name = Name };
+        // GUI-27: an existing profile shows its problems as soon as it is opened.
+        _issues = IsNew ? null : Runs.ValidateProfile(_p).Issues;
+        LoadTemplateRules();
+        if (!IsNew)
+            _estimate = ProfileInsights.For(Runs.Store, _p);
+    }
+
+    private void LoadTemplateRules() =>
+        _templateRules = _p.Templates.SelectMany(t => Settings.GetTemplate(t)?.Rules ?? []).ToList();
+
+    private static List<string> Lines(string? v) =>
+        (v ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    private static List<double> Numbers(string? v) =>
+        (v ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => double.TryParse(x.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? d : -1).ToList();
+
+    private async Task EditTarget(Target? target)
+    {
+        var parameters = new DialogParameters<TargetDialog> { { x => x.Value, target }, { x => x.Connection, _p.Connections.FirstOrDefault() } };
+        var dialog = await Dialogs.ShowAsync<TargetDialog>(target is null ? L.T("Нова ціль") : L.T("Ціль"),parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        if (await dialog.Result is not { Canceled: false, Data: Target result })
+            return;
+        if (target is null)
+            _p.Targets.Add(result);
+        else
+            _p.Targets[_p.Targets.IndexOf(target)] = result;
+    }
+
+    private void Estimate()
+    {
+        _estimated = true;
+        if (!IsNew)
+            _estimate = ProfileInsights.For(Runs.Store, _p);
+    }
+
+    /// <summary>GUI-20: ready-made sets of performance settings.</summary>
+    private void Preset(int kind)
+    {
+        var perf = _p.Performance;
+        switch (kind)
+        {
+            case 1:
+                (perf.Downloads, perf.Processors, perf.Uploads, perf.BudgetPercent, perf.ExcelProcesses) = (4, 2, 2, 50, 1);
+                perf.Windows = [];
+                perf.OnlyInWindows = false;
+                break;
+            case 2:
+                (perf.Downloads, perf.Processors, perf.Uploads, perf.BudgetPercent, perf.ExcelProcesses) = (8, 4, 4, 80, 2);
+                perf.Windows = [];
+                perf.OnlyInWindows = false;
+                break;
+            default:
+                (perf.Downloads, perf.Processors, perf.Uploads, perf.BudgetPercent, perf.ExcelProcesses) = (8, 4, 4, 50, 2);
+                perf.Windows =
+                [
+                    new ScheduleWindow { Days = [.. Days[..5]], From = "20:00", To = "07:00", BudgetPercent = 80 },
+                    new ScheduleWindow { Days = ["Sat", "Sun"], From = "00:00", To = "24:00", BudgetPercent = 80 },
+                ];
+                perf.OnlyInWindows = true;
+                break;
+        }
+        Snackbar.Add(L.T("Пресет застосовано; збережіть профіль."), Severity.Info);
+    }
+
+    private void AddWindow() => _p.Performance.Windows.Add(new ScheduleWindow { Days = [.. Days[..5]], From = "20:00", To = "07:00" });
+
+    private void ConnectionsChanged(IEnumerable<string> values)
+    {
+        _p.Connections = values.ToList();
+    }
+
+    /// <summary>THR-11: the pool is turned on only explicitly, after the warning.</summary>
+    private async Task PoolChanged(bool on)
+    {
+        if (on && await Dialogs.ShowMessageBox(L.T("Увімкнути пул застосунків?"),
+                L.T("Microsoft не рекомендує створювати кілька застосунків для однієї задачі, щоб обійти ліміти: усі вони ділять один тенантний бюджет, і тривале перевищення може призвести до throttling користувачів і блокування застосунку. Навантаження пулу буде обмежене стелею тенантного бюджету."),
+                yesText: L.T("Увімкнути"), cancelText: L.T("Скасувати")) != true)
+            return;
+        _p.Pool.Enabled = on;
+    }
+
+    private Task ExportJson() =>
+        SaveFile.Text(Saver, Snackbar, $"{SaveFile.Name(Name)}.profile.json", Settings.GetJson(SettingKinds.Profile, Name) ?? _p.ToJson());
+
+    private void Validate() => _issues = Runs.ValidateProfile(_p).Issues;
+
+    private void Save()
+    {
+        string name = IsNew ? (_name ?? string.Empty).Trim() : Name;
+        try
+        {
+            if (IsNew && Settings.GetProfile(name) is not null)
+                throw new InvalidOperationException(L.F("Профіль «{0}» уже існує.", name));
+            _p.Rules.RemoveAll(r => string.IsNullOrWhiteSpace(r.Old) && string.IsNullOrWhiteSpace(r.New));
+            _issues = Settings.Save(name, _p);
+            int errors = _issues.Count(i => i.Severity == IssueSeverity.Error);
+            Snackbar.Add(errors == 0 ? L.T("Збережено, профіль готовий до запуску.") : L.F("Збережено; помилок: {0} — прогін не запуститься, доки їх не виправлено.", errors),
+                errors == 0 ? Severity.Success : Severity.Warning);
+            if (IsNew)
+                Nav.NavigateTo($"profiles/{Uri.EscapeDataString(name)}");
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task Run()
+    {
+        var dialog = await Dialogs.ShowAsync<NewRunDialog>(L.T("Новий прогін"),new DialogParameters<NewRunDialog> { { x => x.Profile, Name } },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        if (await dialog.Result is { Canceled: false, Data: long id })
+            Nav.NavigateTo($"runs/{id}");
+    }
+}

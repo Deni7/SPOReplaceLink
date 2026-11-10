@@ -1,0 +1,215 @@
+﻿@page "/connections/{Name}"
+@* GUI-26: tenant, client id, certificate from the Windows store, license tier (THR-2), connection test. *@
+@inject SettingsService Settings
+@inject RunService Runs
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>@L.F("Підключення {0}", Name) — SPOReplaceLink</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+    <MudLink Href="connections">@L.T("← підключення")</MudLink>
+    <MudText Typo="Typo.h5">@(IsNew ? L.T("Нове підключення") : L.F("Підключення «{0}»", Name))</MudText>
+    <HelpButton Section="31-підключення" />
+    <MudSpacer />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Save">@L.T("Зберегти")</MudButton>
+</MudStack>
+
+<MudGrid Spacing="2">
+    <MudItem xs="12" md="7">
+        <MudPaper Class="pa-3" Elevation="1">
+            @if (IsNew)
+            {
+                <MudTextField T="string" Label="@L.T("Назва")" @bind-Value="_name" Required="true" Class="mb-2" />
+            }
+            <MudTextField T="string" Label="@L.T("Тенант (ID або домен)")" @bind-Value="_c.TenantId" Placeholder="contoso.onmicrosoft.com" Class="mb-2" />
+            <MudTextField T="string" Label="@L.T("Client ID застосунку")" @bind-Value="_c.ClientId" Placeholder="00000000-0000-0000-0000-000000000000" Class="mb-2" />
+            <MudSelect T="string" Label="@L.T("Автентифікація")" @bind-Value="_c.AuthMode" Class="mb-2">
+                <MudSelectItem Value="@("certificate")">@L.T("Сертифікат, app-only (рекомендовано)")</MudSelectItem>
+                <MudSelectItem Value="@("deviceCode")">@L.T("Вхід користувача за кодом (резервний варіант)")</MudSelectItem>
+            </MudSelect>
+            @if (_c.AuthMode == "certificate")
+            {
+                <MudSelect T="string" Label="@L.T("Сертифікат зі сховища Windows")" Value="@SelectedCert" ValueChanged="PickCertificate" Clearable="true" Class="mb-2"
+                           HelperText="@L.F("CurrentUser\\My облікового запису {0} і LocalMachine\\My. Вибрати можна лише сертифікат із закритим ключем.", CertificateCatalog.Account)">
+                    @foreach (var cert in _certs)
+                    {
+                        <MudSelectItem Value="@CertKey(cert.Store, cert.Thumbprint)" Disabled="@(!cert.HasPrivateKey || !cert.KeyAccessible)">@cert.Title · @L.F("до {0}", cert.NotAfter.ToString("d", Ui.Culture))@CertNote(cert) · @cert.Store</MudSelectItem>
+                    }
+                </MudSelect>
+                @if (CertWarning() is { } warning)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2">@warning</MudAlert>
+                }
+                <MudTextField T="string" Label="@L.T("Відбиток (thumbprint)")" @bind-Value="_c.CertificateThumbprint" Class="mb-2 mono" />
+                <MudSelect T="string" Label="@L.T("Сховище")" @bind-Value="_c.CertificateStore" Class="mb-2">
+                    <MudSelectItem Value="@("CurrentUser")">CurrentUser\My</MudSelectItem>
+                    <MudSelectItem Value="@("LocalMachine")">LocalMachine\My</MudSelectItem>
+                </MudSelect>
+            }
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="5">
+        <MudPaper Class="pa-3" Elevation="1">
+            <MudSelect T="LicenseTier" Label="@L.T("Ліцензій у тенанті (визначає ліміти SharePoint)")" @bind-Value="_c.Licenses" Class="mb-2">
+                <MudSelectItem Value="LicenseTier.UpTo1000">@L.T("до 1 000")</MudSelectItem>
+                <MudSelectItem Value="LicenseTier.UpTo5000">1 001 – 5 000</MudSelectItem>
+                <MudSelectItem Value="LicenseTier.UpTo15000">5 001 – 15 000</MudSelectItem>
+                <MudSelectItem Value="LicenseTier.UpTo50000">15 001 – 50 000</MudSelectItem>
+                <MudSelectItem Value="LicenseTier.Over50000">@L.T("понад 50 000")</MudSelectItem>
+            </MudSelect>
+            @{ var l = _c.Limits(); }
+            <MudSimpleTable Dense="true" Class="mb-2">
+                <tbody>
+                    <tr><td>@L.T("Застосунок, RU/хв")</td><td>@Ui.N(l.PerMinute)</td></tr>
+                    <tr><td>@L.T("Застосунок, RU/добу")</td><td>@Ui.N(l.PerDay)</td></tr>
+                    <tr><td>@L.T("Тенант, RU за 5 хв")</td><td>@Ui.N(l.TenantPer5Min)</td></tr>
+                </tbody>
+            </MudSimpleTable>
+            <MudText Typo="Typo.caption">@L.T("Ручне коригування (порожньо — за таблицею Microsoft):")</MudText>
+            <MudNumericField T="int?" Label="@L.T("RU/хв")" @bind-Value="_c.AppPerMinuteOverride" Min="1" Margin="Margin.Dense" />
+            <MudNumericField T="int?" Label="@L.T("RU/добу")" @bind-Value="_c.AppPerDayOverride" Min="1" Margin="Margin.Dense" />
+            <MudNumericField T="int?" Label="@L.T("Тенант, RU за 5 хв")" @bind-Value="_c.TenantPer5MinOverride" Min="1" Margin="Margin.Dense" />
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12">
+        <MudPaper Class="pa-3" Elevation="1">
+            <MudText Typo="Typo.subtitle1">@L.T("Перевірити підключення")</MudText>
+            <MudStack Row="true" AlignItems="AlignItems.End" Wrap="Wrap.Wrap">
+                <MudSelect T="string" Label="@L.T("Профіль (перевірити доступ до його цілей)")" @bind-Value="_testProfile" Clearable="true" Style="min-width:280px">
+                    @foreach (var (p, _) in Settings.List(SettingKinds.Profile))
+                    {
+                        <MudSelectItem Value="@p">@p</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton Variant="Variant.Outlined" Disabled="IsNew || _testing" OnClick="Test" StartIcon="@Icons.Material.Filled.NetworkCheck">
+                    @(_testing ? L.T("Перевіряю…") : L.T("Перевірити"))
+                </MudButton>
+                @if (IsNew)
+                {
+                    <MudText Typo="Typo.caption">@L.T("Спершу збережіть підключення.")</MudText>
+                }
+            </MudStack>
+            @foreach (var check in _checks)
+            {
+                <MudAlert Severity="@(check.Ok ? Severity.Success : Severity.Error)" Dense="true" Class="mt-2">@check.What: @check.Message</MudAlert>
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@if (_issues is not null)
+{
+    <IssueList Issues="_issues" />
+}
+
+@code {
+    [Parameter] public string Name { get; set; } = string.Empty;
+
+    private bool IsNew => Name == "~new";
+    private Connection _c = new();
+    private string? _name;
+    private IReadOnlyList<CertificateCatalog.Entry> _certs = [];
+    private IReadOnlyList<ValidationIssue>? _issues;
+    private string? _testProfile;
+    private bool _testing;
+    private IReadOnlyList<RunService.ConnectionCheck> _checks = [];
+
+    protected override void OnParametersSet()
+    {
+        _c = IsNew ? new Connection() : Settings.GetConnection(Name) ?? new Connection { Name = Name };
+        _certs = CertificateCatalog.List();
+        _issues = null;
+        _checks = [];
+    }
+
+    private static string CertNote(CertificateCatalog.Entry cert) =>
+        !cert.HasPrivateKey ? L.T(" (без закритого ключа)")
+        : !cert.KeyAccessible ? L.T(" (немає доступу до ключа)")
+        : cert.Expired ? L.T(" (прострочений)")
+        : cert.NotYetValid ? L.F(" (дійсний з {0})", cert.NotBefore.ToString("d", Ui.Culture))
+        : string.Empty;
+
+    /// <summary>Explains why the entered thumbprint will not work, using what this process can see.</summary>
+    private string? CertWarning()
+    {
+        string? thumbprint = _c.CertificateThumbprint?.Replace(" ", string.Empty);
+        if (string.IsNullOrEmpty(thumbprint))
+            return null;
+        var matches = _certs.Where(c => string.Equals(c.Thumbprint, thumbprint, StringComparison.OrdinalIgnoreCase)).ToList();
+        var inStore = matches.FirstOrDefault(c => c.Store == (_c.CertificateStore ?? "CurrentUser"));
+        if (inStore is null)
+            return matches.Count > 0
+                ? L.F("Сертифікат є у сховищі {0}\\My, а вибрано {1}\\My.", matches[0].Store, _c.CertificateStore)
+                : L.F("Сертифікат {0} не знайдено. Застосунок працює під обліковим записом {1} і бачить лише його CurrentUser\\My та LocalMachine\\My. ", thumbprint, CertificateCatalog.Account)
+                  + L.T("Якщо сертифікат створено під іншим записом — запустіть застосунок під ним, або перенесіть сертифікат у LocalMachine\\My і дайте цьому запису доступ до ключа.");
+        if (!inStore.HasPrivateKey)
+            return L.F("У сховищі {0}\\My лише відкрита частина сертифіката, без закритого ключа — так буває, коли туди імпортовано файл .cer. ", inStore.Store)
+                + L.T("Ключ є тільки там, де сертифікат створено командою New-SelfSignedCertificate, і вивантажити його не можна (NonExportable). ")
+                + L.T("Виберіть той екземпляр сертифіката (інше сховище або запустіть застосунок під записом, яким його створено) ")
+                + L.T("або створіть новий сертифікат за довідкою (крок 1) і додайте його .cer у застосунок Entra.");
+        if (!inStore.KeyAccessible)
+            return L.F("Закритий ключ є, але обліковий запис {0} не має до нього доступу. ", CertificateCatalog.Account)
+                + L.T("Адміністратор: certlm.msc → Personal → Certificates → сертифікат → All Tasks → Manage Private Keys → додати цей запис з правом Read.");
+        if (inStore.Expired)
+            return L.F("Сертифікат прострочений ({0}).", inStore.NotAfter.ToString("d", Ui.Culture));
+        if (inStore.NotYetValid)
+            return L.F("Сертифікат ще не дійсний (з {0}). Перевірте годинник цієї машини.", inStore.NotBefore.ToString("d", Ui.Culture));
+        return null;
+    }
+
+    // The same certificate may be in both stores (with the key in one of them only): an item is the pair store + thumbprint.
+    private static string CertKey(string? store, string? thumbprint) => $"{store ?? "CurrentUser"}|{thumbprint?.Replace(" ", string.Empty).ToUpperInvariant()}";
+
+    private string? SelectedCert => string.IsNullOrWhiteSpace(_c.CertificateThumbprint) ? null : CertKey(_c.CertificateStore, _c.CertificateThumbprint);
+
+    private void PickCertificate(string? key)
+    {
+        if (key is null)
+        {
+            _c.CertificateThumbprint = null;
+            return;
+        }
+        int bar = key.IndexOf('|');
+        _c.CertificateStore = key[..bar];
+        _c.CertificateThumbprint = key[(bar + 1)..];
+    }
+
+    private void Save()
+    {
+        string name = IsNew ? (_name ?? string.Empty).Trim() : Name;
+        try
+        {
+            if (IsNew && Settings.GetConnection(name) is not null)
+                throw new InvalidOperationException(L.F("Підключення «{0}» уже існує.", name));
+            _c.CertificateThumbprint = _c.CertificateThumbprint?.Replace(" ", string.Empty).ToUpperInvariant();
+            _issues = Settings.Save(name, _c);
+            Snackbar.Add(L.T("Збережено."), Severity.Success);
+            if (IsNew)
+                Nav.NavigateTo($"connections/{Uri.EscapeDataString(name)}");
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task Test()
+    {
+        _testing = true;
+        _checks = [];
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            _checks = await Runs.TestConnectionAsync(Name, _testProfile, cts.Token);
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException or OperationCanceledException or Spo.SpoException)
+        {
+            _checks = [new RunService.ConnectionCheck(L.T("перевірка"), false, ex.Message)];
+        }
+        finally
+        {
+            _testing = false;
+        }
+    }
+}

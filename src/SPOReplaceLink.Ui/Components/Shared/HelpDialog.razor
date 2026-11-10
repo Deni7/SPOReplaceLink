@@ -1,0 +1,42 @@
+@* A guide section in a window; a link to another section or "Відкрити в довідці" goes to the help page. *@
+@implements IDisposable
+@inject NavigationManager Nav
+
+<MudDialog>
+    <DialogContent>
+        @if (UserGuide.Instance.Find(Section) is { } section)
+        {
+            <div style="max-height:65vh;overflow:auto">
+                <HelpContent Section="section" />
+                @if (section.Children.Count > 0)
+                {
+                    <MudText Typo="Typo.subtitle1" Class="mt-3">@L.T("Підрозділи")</MudText>
+                    @foreach (var c in section.Children)
+                    {
+                        <MudLink Href="@($"help/{c.Id}")" Class="d-block">@c.Title</MudLink>
+                    }
+                }
+            </div>
+        }
+        else
+        {
+            <MudText>@L.F("Розділ «{0}» не знайдено.", Section)</MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Href="@($"help/{Section}")" StartIcon="@Icons.Material.Filled.MenuBook">@L.T("Відкрити в довідці")</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="() => MudDialog.Close()">@L.T("Закрити")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter] public string Section { get; set; } = string.Empty;
+
+    // Going to the help page (or anywhere else) closes the window.
+    protected override void OnInitialized() => Nav.LocationChanged += Close;
+
+    private void Close(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) => InvokeAsync(() => MudDialog.Close());
+
+    public void Dispose() => Nav.LocationChanged -= Close;
+}

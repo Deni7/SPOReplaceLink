@@ -1,0 +1,17 @@
+{
+  // Shell of the app: layout, language, guide. Key — the Ukrainian text in the code, value — English.
+  "Меню": "Menu",
+  "Мова": "Language",
+  "Заміна посилань в Excel після міграції в SharePoint Online": "Fixing Excel links after migration to SharePoint Online",
+  "Довідка": "Help",
+  "Дашборд": "Dashboard",
+  "Прогони": "Runs",
+  "Налаштування": "Settings",
+  "Профілі": "Profiles",
+  "Шаблони правил": "Rule templates",
+  "Підключення": "Connections",
+  "Про інструкцію": "About this guide",
+  "Інструкція": "User guide",
+  "Інструкцію не вбудовано в застосунок.": "The user guide is not embedded in the app.",
+  "Мова повідомлень: uk або en (за замовчуванням SPO_RL_LANG, інакше мова системи)": "Message language: uk or en (default: SPO_RL_LANG, otherwise the system language)"
+}

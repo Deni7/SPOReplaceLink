@@ -1,0 +1,37 @@
+@page "/"
+@inject StatusService StatusService
+@inject IDialogService Dialogs
+@inject NavigationManager Nav
+
+<PageTitle>@L.T("Дашборд") — SPOReplaceLink</PageTitle>
+
+@if (_runId is long id)
+{
+    <RunDashboard RunId="id" />
+}
+else
+{
+    <MudPaper Class="pa-6" Elevation="1">
+        <MudText Typo="Typo.h5" Class="mb-2">@L.T("Прогонів ще не було")</MudText>
+        <MudText Class="mb-4">@L.T("Спершу додайте підключення до SharePoint, шаблон правил і профіль, потім запустіть inventory або scan.")</MudText>
+        <MudStack Row="true" Spacing="2">
+            <MudButton Href="connections" Variant="Variant.Outlined">@L.T("Підключення")</MudButton>
+            <MudButton Href="templates" Variant="Variant.Outlined">@L.T("Шаблони правил")</MudButton>
+            <MudButton Href="profiles" Variant="Variant.Outlined">@L.T("Профілі")</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="NewRun">@L.T("Новий прогін")</MudButton>
+        </MudStack>
+    </MudPaper>
+}
+
+@code {
+    private long? _runId;
+
+    protected override void OnInitialized() => _runId = StatusService.CurrentRunId();
+
+    private async Task NewRun()
+    {
+        var dialog = await Dialogs.ShowAsync<NewRunDialog>(L.T("Новий прогін"),new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        if (await dialog.Result is { Canceled: false, Data: long id })
+            Nav.NavigateTo($"runs/{id}");
+    }
+}

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SPOReplaceLink.Core\SPOReplaceLink.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SPOReplaceLink.OpenXml.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,136 @@
+@* GUI-22: rules as an editable table with RUL-8 validation while typing and the RUL-9 link test over the whole set. *@
+
+<MudTable Items="Rules" Dense="true" Hover="true" T="RuleEntry" Breakpoint="Breakpoint.Sm" Class="mb-2">
+    <HeaderContent>
+        <MudTh Style="width:40px">№</MudTh><MudTh Style="width:38%">@L.T("Старий префікс")</MudTh><MudTh Style="width:38%">@L.T("Новий префікс")</MudTh><MudTh Style="width:16%">@L.T("Назва")</MudTh><MudTh Style="width:40px"></MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        @{ int index = Rules.IndexOf(context) + 1; var rowIssues = _issues.Where(i => i.RuleIndex == index).ToList(); }
+        <MudTd>@(Offset + index)</MudTd>
+        <MudTd>
+            <MudTextField T="string" Value="context.Old" ValueChanged="v => Set(() => context.Old = v)" Immediate="true" DebounceInterval="300"
+                          Placeholder="https://tenant.sharepoint.com/Document" Error="@rowIssues.Any(i => i.Severity == IssueSeverity.Error)" Margin="Margin.Dense" Disabled="ReadOnly" />
+            @foreach (var i in rowIssues)
+            {
+                <MudText Typo="Typo.caption" Color="@(i.Severity == IssueSeverity.Error ? Color.Error : Color.Warning)" Class="d-block">@i.Message</MudText>
+            }
+        </MudTd>
+        <MudTd>
+            <MudTextField T="string" Value="context.New" ValueChanged="v => Set(() => context.New = v)" Immediate="true" DebounceInterval="300"
+                          Placeholder="https://tenant.sharepoint.com/sites/new" Margin="Margin.Dense" Disabled="ReadOnly" />
+        </MudTd>
+        <MudTd><MudTextField T="string" Value="context.Name" ValueChanged="v => Set(() => context.Name = v)" Margin="Margin.Dense" Disabled="ReadOnly" /></MudTd>
+        <MudTd>
+            @if (!ReadOnly)
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" OnClick="() => Set(() => Rules.Remove(context))" aria-label="@L.T("Видалити правило")" />
+            }
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>@L.T("Правил немає.")</NoRecordsContent>
+</MudTable>
+
+@if (!ReadOnly)
+{
+    <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Add" OnClick="() => Set(() => Rules.Add(new RuleEntry()))">@L.T("Додати правило")</MudButton>
+}
+
+@{ var general = _issues.Where(i => i.RuleIndex is null).ToList(); }
+@if (general.Count > 0)
+{
+    <IssueList Issues="general" ShowOk="false" />
+}
+else if (_issues.All(i => i.Severity != IssueSeverity.Error) && Rules.Count > 0)
+{
+    <MudText Typo="Typo.caption" Color="Color.Success" Class="d-block mt-1">@L.F("Набір правил коректний ({0} попереджень).", _issues.Count)</MudText>
+}
+
+<MudPaper Class="pa-3 mt-3" Outlined="true" Elevation="0">
+    <MudText Typo="Typo.subtitle2">@L.T("Перевірити посилання")</MudText>
+    <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.End">
+        <MudTextField T="string" Label="@L.T("Посилання")" @bind-Value="_testUrl" Style="min-width:360px" Margin="Margin.Dense" Immediate="true" OnKeyUp="@(e => { if (e.Key == "Enter") Test(); })" />
+        <MudTextField T="string" Label="@L.T("Стара папка документа (для відносних)")" @bind-Value="_testFolder" Style="min-width:280px" Margin="Margin.Dense" />
+        <MudButton Variant="Variant.Outlined" OnClick="Test">@L.T("Перевірити")</MudButton>
+    </MudStack>
+    @if (_testResult is { } r)
+    {
+        <MudSimpleTable Dense="true" Class="mt-2">
+            <tbody>
+                @if (r.ResolvedFrom is { } rf)
+                {
+                    <tr><td>@L.T("Розв'язано як")</td><td class="mono">@rf</td></tr>
+                }
+                <tr><td>@L.T("Нормалізовано")</td><td class="mono">@_testNormalized</td></tr>
+                <tr><td>@L.T("Збіглися правила")</td><td>@(_testCandidates.Count == 0 ? L.T("жодне") : string.Join("; ", _testCandidates))</td></tr>
+                <tr><td>@L.T("Результат")</td><td class="mono"><b>@TestText(r)</b></td></tr>
+                @if (_testAgain is { } again)
+                {
+                    <tr><td colspan="2"><MudText Color="Color.Error">@L.F("Повторна заміна дала б {0} — набір не ідемпотентний.", again)</MudText></td></tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public List<RuleEntry> Rules { get; set; } = [];
+    [Parameter] public string? BaseHost { get; set; }
+    /// <summary>Rules that come before these ones (templates of a profile) and are validated together (GUI-24).</summary>
+    [Parameter] public IReadOnlyList<RuleEntry> Preceding { get; set; } = [];
+    [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private IReadOnlyList<ValidationIssue> _issues = [];
+    private RuleSet? _set;
+    private string? _testUrl;
+    private string? _testFolder;
+    private RewriteResult? _testResult;
+    private string? _testNormalized;
+    private List<string> _testCandidates = [];
+    private string? _testAgain;
+
+    private int Offset => Preceding.Count;
+
+    protected override void OnParametersSet() => Validate();
+
+    private async Task Set(Action change)
+    {
+        change();
+        Validate();
+        await Changed.InvokeAsync();
+    }
+
+    private void Validate()
+    {
+        var all = Preceding.Concat(Rules).Select(r => new RewriteRule(r.Old ?? string.Empty, r.New ?? string.Empty, r.Name)).ToList();
+        var build = RuleSet.Build(all, string.IsNullOrWhiteSpace(BaseHost) ? null : BaseHost);
+        _set = build.RuleSet;
+        // Issue numbers are shown relative to this table; issues of preceding rules are shown as general.
+        _issues = build.Issues
+            .Select(i => i.RuleIndex is int n && n > Offset ? i with { RuleIndex = n - Offset } : i with { RuleIndex = null, Message = i.RuleIndex is int m ? L.F("[правило {0}] {1}", m, i.Message) : i.Message })
+            .ToList();
+    }
+
+    private void Test()
+    {
+        _testResult = null;
+        _testAgain = null;
+        if (_set is null || string.IsNullOrWhiteSpace(_testUrl))
+            return;
+        string url = _testUrl.Trim();
+        _testResult = _set.Rewrite(url, string.IsNullOrWhiteSpace(_testFolder) ? null : _testFolder.Trim());
+        _testNormalized = Core.Urls.NormalizedLink.Normalize(_testResult.ResolvedFrom ?? url);
+        _testCandidates = _set.FindAll(_testNormalized).Select(c => (c == _testResult.Rule ? "✔ " : "") + c).ToList();
+        if (_testResult.Changed && _set.Rewrite(_testResult.NewValue!).Changed)
+            _testAgain = _set.Rewrite(_testResult.NewValue!).NewValue;
+    }
+
+    private static string TestText(RewriteResult r) => r.Outcome switch
+    {
+        RewriteOutcome.Replaced => r.NewValue!,
+        RewriteOutcome.AlreadyCurrent => L.T("без змін (уже нова адреса)"),
+        RewriteOutcome.NoRule => L.T("жодне правило не спрацювало"),
+        RewriteOutcome.Unresolved => L.T("відносне посилання: задайте стару папку документа або baseHost"),
+        _ => L.T("не є посиланням на розташування"),
+    };
+}

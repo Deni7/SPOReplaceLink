@@ -1,0 +1,150 @@
+﻿@* GUI-4: profile and mode, one-off changes that are not saved to the profile, validation before the start,
+   confirmation with the file count for apply. *@
+@inject RunService Runs
+@inject SettingsService Settings
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudSelect T="string" Label="@L.T("Профіль")" Value="_profile" ValueChanged="ProfileChanged" Required="true">
+            @foreach (var (name, _) in Settings.List(SettingKinds.Profile))
+            {
+                <MudSelectItem Value="@name">@name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudRadioGroup T="string" @bind-Value="_mode" Class="mt-3">
+            <MudRadio T="string" Value="RunModes.Inventory">@L.T("inventory — перелік і гістограма префіксів, без запису")</MudRadio>
+            <MudRadio T="string" Value="RunModes.Scan">@L.T("scan — що буде замінено, без запису")</MudRadio>
+            <MudRadio T="string" Value="RunModes.Apply" Color="Color.Error">@L.T("apply — заміна і запис у SharePoint")</MudRadio>
+            <MudRadio T="string" Value="RunModes.Verify">@L.T("verify — повна перевірка всіх файлів на залишки")</MudRadio>
+        </MudRadioGroup>
+
+        @if (_run is not null)
+        {
+            <MudExpansionPanels Elevation="0" Class="mt-3">
+                <MudExpansionPanel Text="@(Changed ? L.T("Разові зміни для цього прогону (є зміни)") : L.T("Разові зміни для цього прогону"))">
+                    <MudText Typo="Typo.caption" Class="mb-2 d-block">@L.T("Діють лише на цей прогін і потрапляють у його знімок налаштувань; профіль не змінюється.")</MudText>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="6" sm="3"><MudNumericField T="int" Label="@L.T("Завантажень")" Value="_run.Performance.Downloads" ValueChanged="v => Edit(() => _run.Performance.Downloads = v)" Min="1" Max="64" /></MudItem>
+                        <MudItem xs="6" sm="3"><MudNumericField T="int" Label="@L.T("Обробників")" Value="_run.Performance.Processors" ValueChanged="v => Edit(() => _run.Performance.Processors = v)" Min="1" Max="64" /></MudItem>
+                        <MudItem xs="6" sm="3"><MudNumericField T="int" Label="@L.T("Вивантажень")" Value="_run.Performance.Uploads" ValueChanged="v => Edit(() => _run.Performance.Uploads = v)" Min="1" Max="64" /></MudItem>
+                        <MudItem xs="6" sm="3"><MudNumericField T="int" Label="@L.T("Бюджет RU, %")" Value="_run.Performance.BudgetPercent" ValueChanged="v => Edit(() => _run.Performance.BudgetPercent = v)" Min="1" Max="100" /></MudItem>
+                        <MudItem xs="6" sm="3"><MudNumericField T="int" Label="@L.T("Процесів Excel")" Value="_run.Performance.ExcelProcesses" ValueChanged="v => Edit(() => _run.Performance.ExcelProcesses = v)" Min="0" Max="16" /></MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField T="string" Label="@L.T("Включати лише шляхи (маска на рядок)")" Lines="2" Value="@string.Join("\n", _run.Filters.Include)"
+                                          ValueChanged="v => Edit(() => _run.Filters.Include = Lines(v))" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField T="string" Label="@L.T("Виключати шляхи (маска на рядок)")" Lines="2" Value="@string.Join("\n", _run.Filters.Exclude)"
+                                          ValueChanged="v => Edit(() => _run.Filters.Exclude = Lines(v))" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudSwitch T="bool" Label="Hyperlinks" Value="_run.Places.Hyperlinks" ValueChanged="v => Edit(() => _run.Places.Hyperlinks = v)" Color="Color.Primary" />
+                            <MudSwitch T="bool" Label="Link Sources" Value="_run.Places.LinkSources" ValueChanged="v => Edit(() => _run.Places.LinkSources = v)" Color="Color.Primary" />
+                            <MudSwitch T="bool" Label="@L.T("Формули")" Value="_run.Places.Formulas" ValueChanged="v => Edit(() => _run.Places.Formulas = v)" Color="Color.Primary" />
+                            <MudSwitch T="bool" Label="@L.T("Працювати лише у вікнах")" Value="_run.Performance.OnlyInWindows" ValueChanged="v => Edit(() => _run.Performance.OnlyInWindows = v)" Color="Color.Primary" />
+                        </MudItem>
+                        @if (Changed)
+                        {
+                            <MudItem xs="12"><MudButton Size="Size.Small" Variant="Variant.Text" OnClick="Reset">@L.T("Скинути до профілю")</MudButton></MudItem>
+                        }
+                    </MudGrid>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+
+        @if (_validation is { } v)
+        {
+            <IssueList Issues="v.Issues" />
+            @if (v.IsValid && _estimate is { } e)
+            {
+                <MudAlert Severity="Severity.Info" Class="mt-2">
+                    @L.F("За переліком прогону {0} ({1}): файлів Excel {2}, під фільтри профілю — {3}.", e.RunId, Ui.Time(e.At), Ui.N(e.Total), Ui.N(e.PassingFilters))
+                </MudAlert>
+            }
+        }
+        @if (_mode == RunModes.Apply && _validation?.IsValid == true)
+        {
+            <MudCheckBox T="bool" @bind-Value="_confirmed" Color="Color.Error" Class="mt-2"
+                         Label="@(L.T("Підтверджую запис змінених файлів у SharePoint") + (_estimate is { } est ? " " + L.F("(до {0} файлів)", Ui.N(est.PassingFilters)) : ""))" />
+        }
+    </DialogContent>
+    <DialogActions>
+        <HelpButton Section="34-новий-прогін" Text="@L.T("Довідка")" />
+        <MudSpacer />
+        <MudButton OnClick="() => MudDialog.Cancel()">@L.T("Скасувати")</MudButton>
+        <MudButton Color="@(_mode == RunModes.Apply ? Color.Error : Color.Primary)" Variant="Variant.Filled"
+                   Disabled="@(_validation?.IsValid != true || (_mode == RunModes.Apply && !_confirmed))" OnClick="Start">@L.T("Запустити")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter] public string? Profile { get; set; }
+
+    private string? _profile;
+    private string _mode = RunModes.Scan;
+    private bool _confirmed;
+    private ProfileValidation? _validation;
+    private ProfileInsights.Estimate? _estimate;
+    private string? _savedJson;
+    private Core.Config.Profile? _run;
+
+    /// <summary>The settings for this run differ from the saved profile.</summary>
+    private bool Changed => _run is not null && _run.ToJson() != _savedJson;
+
+    private static List<string> Lines(string? v) =>
+        (v ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    private void Edit(Action change)
+    {
+        change();
+        _confirmed = false;
+        _validation = Runs.ValidateProfile(_run!);
+        _estimate = ProfileInsights.For(Runs.Store, _run!);
+    }
+
+    private void Reset()
+    {
+        _run = Core.Config.Profile.Parse(_savedJson!);
+        _validation = Runs.ValidateProfile(_run);
+        _estimate = ProfileInsights.For(Runs.Store, _run);
+    }
+
+    protected override void OnInitialized()
+    {
+        if (Profile is not null)
+            ProfileChanged(Profile);
+    }
+
+    private void ProfileChanged(string name)
+    {
+        _profile = name;
+        _confirmed = false;
+        var profile = Settings.GetProfile(name);
+        if (profile is null)
+            return;
+        _savedJson = profile.ToJson();
+        _run = Core.Config.Profile.Parse(_savedJson);
+        _validation = Runs.ValidateProfile(profile);
+        _estimate = ProfileInsights.For(Runs.Store, profile);
+    }
+
+    private void Start()
+    {
+        try
+        {
+            long id = Changed ? Runs.CreateRun(_mode, _profile, _run) : Runs.CreateRun(_mode, _profile);
+            Runs.Start(id);
+            MudDialog.Close(DialogResult.Ok(id));
+        }
+        catch (RunValidationException ex)
+        {
+            _validation = new ProfileValidation(null, ex.Issues);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException or ProfileException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+}

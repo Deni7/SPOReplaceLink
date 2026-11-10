@@ -1,0 +1,31 @@
+﻿@page "/profiles"
+@inject SettingsService Settings
+@inject IDialogService Dialogs
+@inject NavigationManager Nav
+
+<PageTitle>@L.T("Профілі") — SPOReplaceLink</PageTitle>
+
+<SettingsList Kind="@SettingKinds.Profile" Route="profiles" Title="@L.T("Профілі прогону")" Help="с3-профіль-для-бібліотеки" ExtraTitle="@L.T("Цілі · підключення")" Extra="Describe"> @* i18n-ignore: Help is a guide section id *@
+    <RowActions Context="name">
+        <MudTooltip Text="@L.T("Запустити прогін")"><MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small" Color="Color.Primary" OnClick="() => Run(name)" /></MudTooltip>
+    </RowActions>
+</SettingsList>
+
+@code {
+    private string Describe(string name)
+    {
+        var p = Settings.GetProfile(name);
+        if (p is null)
+            return string.Empty;
+        string targets = p.Targets.Count == 0 ? L.T("без цілей") : string.Join("; ", p.Targets.Select(t => t.ToString()));
+        return $"{targets} · {(p.Connections.Count == 0 ? "—" : string.Join(", ", p.Connections))}{(p.Pool.Enabled ? L.T(" (пул)") : "")}";
+    }
+
+    private async Task Run(string name)
+    {
+        var dialog = await Dialogs.ShowAsync<NewRunDialog>(L.T("Новий прогін"),new DialogParameters<NewRunDialog> { { x => x.Profile, name } },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        if (await dialog.Result is { Canceled: false, Data: long id })
+            Nav.NavigateTo($"runs/{id}");
+    }
+}

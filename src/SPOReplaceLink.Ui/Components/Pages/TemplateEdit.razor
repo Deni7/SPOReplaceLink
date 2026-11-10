@@ -1,0 +1,124 @@
+﻿@page "/templates/{Name}"
+@* GUI-22, GUI-23: a named rule set with description, table editor, live validation, link test, import and export. *@
+@inject SettingsService Settings
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+@inject NavigationManager Nav
+@inject IFileSaver Saver
+
+<PageTitle>@L.F("Шаблон {0}", Name) — SPOReplaceLink</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-3">
+    <MudLink Href="templates">@L.T("← шаблони")</MudLink>
+    <MudText Typo="Typo.h5">@(IsNew ? L.T("Новий шаблон") : L.F("Шаблон «{0}»", Name))</MudText>
+    <HelpButton Section="32-шаблон-правил" />
+    <MudSpacer />
+    <MudFileUpload T="IBrowserFile" Accept=".csv,.txt,.xlsx,.tsv" FilesChanged="Import">
+        <ActivatorContent>
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Upload">@L.T("Імпорт правил (CSV, XLSX, ReplaceMagic)")</MudButton>
+        </ActivatorContent>
+    </MudFileUpload>
+    @if (!IsNew)
+    {
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Download" OnClick="ExportCsv">CSV</MudButton>
+    }
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Save">@L.T("Зберегти")</MudButton>
+</MudStack>
+
+<MudPaper Class="pa-3 mb-3" Elevation="1">
+    <MudGrid Spacing="2">
+        @if (IsNew)
+        {
+            <MudItem xs="12" md="4"><MudTextField T="string" Label="@L.T("Назва")" @bind-Value="_name" Required="true" /></MudItem>
+        }
+        <MudItem xs="12" md="@(IsNew ? 8 : 12)"><MudTextField T="string" Label="@L.T("Опис")" @bind-Value="_template.Description" /></MudItem>
+        <MudItem xs="12" md="6">
+            <MudTextField T="string" Label="@L.T("Хост для правил без хоста (лише для перевірки тут)")" @bind-Value="_baseHost" Placeholder="https://tenant.sharepoint.com"
+                          HelperText="@L.T("Зберігається в шаблоні. У прогоні береться baseHost профілю")" Immediate="true" DebounceInterval="400" />
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<MudPaper Class="pa-3" Elevation="1">
+    <MudText Typo="Typo.body2" Class="mb-2">
+        @L.T("Порядок правил не має значення: для кожного посилання спрацьовує правило з найдовшим старим префіксом, лише на межі сегмента шляху, без урахування регістру і способу кодування.")
+    </MudText>
+    <RulesEditor Rules="_template.Rules" BaseHost="@_baseHost" />
+</MudPaper>
+
+@if (_saved is not null)
+{
+    <IssueList Issues="_saved" />
+}
+
+@code {
+    [Parameter] public string Name { get; set; } = string.Empty;
+
+    private bool IsNew => Name == "~new";
+    private Template _template = new();
+    private string? _name;
+    private const string Placeholder = "https://base-host.invalid";
+    private string? _baseHost = Placeholder;
+    private IReadOnlyList<ValidationIssue>? _saved;
+
+    protected override void OnParametersSet()
+    {
+        _template = IsNew ? new Template { Rules = [new RuleEntry()] } : Settings.GetTemplate(Name) ?? new Template { Name = Name };
+        // The saved host, or the tenant the absolute rules point to; the placeholder only when there is neither.
+        _baseHost = _template.GuessBaseHost() ?? Placeholder;
+        _saved = null;
+    }
+
+    private async Task Import(IBrowserFile? file)
+    {
+        if (file is null)
+            return;
+        try
+        {
+            using var ms = new MemoryStream();
+            await file.OpenReadStream(20 * 1024 * 1024).CopyToAsync(ms);
+            ms.Position = 0;
+            var result = RuleImport.Parse(file.Name, ms);
+            bool replace = _template.Rules.All(r => string.IsNullOrWhiteSpace(r.Old) && string.IsNullOrWhiteSpace(r.New))
+                || await Dialogs.ShowMessageBox(L.T("Імпорт правил"), L.F("Знайдено правил: {0}. Замінити наявні чи додати до них?", result.Rules.Count),
+                    yesText: L.T("Замінити"), noText: L.T("Додати"), cancelText: L.T("Скасувати")) switch { true => true, false => false, null => throw new OperationCanceledException() };
+            if (replace)
+                _template.Rules.Clear();
+            _template.Rules.RemoveAll(r => string.IsNullOrWhiteSpace(r.Old) && string.IsNullOrWhiteSpace(r.New));
+            _template.Rules.AddRange(result.Rules);
+            Snackbar.Add(L.F("Імпортовано правил: {0}", result.Rules.Count) + (result.Warnings.Count > 0 ? L.F("; попереджень: {0}", result.Warnings.Count) : ""),result.Rules.Count > 0 ? Severity.Success : Severity.Warning);
+            foreach (string w in result.Warnings.Take(5))
+                Snackbar.Add(w, Severity.Warning);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or System.Xml.XmlException)
+        {
+            Snackbar.Add(L.T("Файл не прочитано: ") + ex.Message, Severity.Error);
+        }
+    }
+
+    private Task ExportCsv() => SaveFile.Bytes(Saver, Snackbar, $"{SaveFile.Name(Name)}.rules.csv", RuleImport.ToCsv(_template.Rules));
+
+    private void Save()
+    {
+        string name = IsNew ? (_name ?? string.Empty).Trim() : Name;
+        try
+        {
+            if (IsNew && Settings.GetTemplate(name) is not null)
+                throw new InvalidOperationException(L.F("Шаблон «{0}» уже існує.", name));
+            _template.Rules.RemoveAll(r => string.IsNullOrWhiteSpace(r.Old) && string.IsNullOrWhiteSpace(r.New));
+            string? host = _baseHost?.Trim().TrimEnd('/');
+            _template.TestBaseHost = string.IsNullOrEmpty(host) || host.Equals(Placeholder, StringComparison.OrdinalIgnoreCase) ? null : host;
+            _saved = Settings.Save(name, _template);
+            Snackbar.Add(L.T("Збережено."), Severity.Success);
+            if (IsNew)
+                Nav.NavigateTo($"templates/{Uri.EscapeDataString(name)}");
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+}

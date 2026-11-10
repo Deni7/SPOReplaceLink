@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SPOReplaceLink.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Translation catalogs: Localization/<area>.<lang>.json, Ukrainian text → translation (see Localization/L.cs). -->
+    <EmbeddedResource Include="Localization\*.json" LogicalName="i18n/%(Filename)%(Extension)" WithCulture="false" />
+  </ItemGroup>
+
+</Project>

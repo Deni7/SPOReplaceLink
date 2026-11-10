@@ -1,0 +1,41 @@
+@page "/runs"
+@inject RunService Runs
+@inject IDialogService Dialogs
+@inject NavigationManager Nav
+
+<PageTitle>@L.T("Прогони") — SPOReplaceLink</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+    <MudText Typo="Typo.h5">@L.T("Прогони")</MudText>
+    <MudSpacer />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="NewRun">@L.T("Новий прогін")</MudButton>
+</MudStack>
+
+<MudTable Items="_runs" Dense="true" Hover="true" OnRowClick="@((TableRowClickEventArgs<RunRow> e) => Nav.NavigateTo($"runs/{e.Item!.Id}"))" T="RunRow" RowStyle="cursor:pointer">
+    <HeaderContent>
+        <MudTh>№</MudTh><MudTh>@L.T("Режим")</MudTh><MudTh>@L.T("Профіль")</MudTh><MudTh>@L.T("Статус")</MudTh><MudTh>@L.T("Створено")</MudTh><MudTh>@L.T("Завершено")</MudTh><MudTh>@L.T("Повтор прогону")</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd>@context.Id</MudTd>
+        <MudTd>@Ui.Mode(context.Mode)</MudTd>
+        <MudTd>@context.ProfileName</MudTd>
+        <MudTd><MudChip T="string" Size="Size.Small" Color="Ui.RunColor(context.Status)">@Ui.RunStatus(context.Status)</MudChip></MudTd>
+        <MudTd>@Ui.Time(context.CreatedAt)</MudTd>
+        <MudTd>@Ui.Time(context.FinishedAt)</MudTd>
+        <MudTd>@(context.ParentId?.ToString(Ui.Culture) ?? "—")</MudTd>
+    </RowTemplate>
+    <NoRecordsContent>@L.T("Прогонів ще не було.")</NoRecordsContent>
+</MudTable>
+
+@code {
+    private IReadOnlyList<RunRow> _runs = [];
+
+    protected override void OnInitialized() => _runs = Runs.Store.ListRuns(500);
+
+    private async Task NewRun()
+    {
+        var dialog = await Dialogs.ShowAsync<NewRunDialog>(L.T("Новий прогін"),new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        if (await dialog.Result is { Canceled: false, Data: long id })
+            Nav.NavigateTo($"runs/{id}");
+    }
+}

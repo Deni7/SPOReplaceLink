@@ -1,0 +1,38 @@
+{
+  // Profile for the finance library. Rules from ReplaceMagic, the order does not matter:
+  // for each link the rule with the longest old prefix applies.
+  "name": "finance",
+  "baseHost": "https://contoso.sharepoint.com",
+  "rules": [
+    { "old": "/Document/", "new": "https://contoso.sharepoint.com/sites/finance/", "name": "Document → finance" },
+    { "old": "https://contoso.sharepoint.com/Document", "new": "https://contoso.sharepoint.com/sites/finance", "name": "Document → finance (full URL)" },
+    { "old": "/Document/Analytics/", "new": "/sites/finance/analytics_migrated/", "name": "Analytics → analytics_migrated" },
+    { "old": "/sites/finance/Analytics/", "new": "/sites/finance/analytics_migrated/", "name": "finance/Analytics → analytics_migrated" }
+  ],
+  "places": {
+    "hyperlinks": true,
+    "linkSources": true,
+    "formulas": true,
+    "otherExternal": true
+  },
+  "filters": {
+    "extensions": [ ".xlsx", ".xlsm", ".xlsb", ".xls" ],
+    "exclude": [ "**/Archive/**" ],
+    "maxFileSizeMb": 500
+  },
+  // Targets in SharePoint: site + library (+ folder). oldLocation is where these files were before the migration (for relative links).
+  "targets": [
+    { "siteUrl": "https://contoso.sharepoint.com/sites/finance", "library": "Documents", "oldLocation": "https://contoso.sharepoint.com/Document" }
+  ],
+  // Connections are stored in the app separately (connections import). More than one only with pool.enabled.
+  "connections": [ "spo-replace-link-1" ],
+  "pool": { "enabled": false, "tenantCeilingPercent": 50 },
+  "performance": {
+    "downloads": 8, "processors": 4, "uploads": 4,
+    "budgetPercent": 60,
+    "windows": [ { "days": [ "Mon", "Tue", "Wed", "Thu", "Fri" ], "from": "20:00", "to": "07:00", "budgetPercent": 80 },
+                 { "days": [ "Sat", "Sun" ], "from": "00:00", "to": "24:00", "budgetPercent": 80 } ],
+    "timeZone": "FLE Standard Time"
+  },
+  "retry": { "fileAttempts": 3, "filePausesMinutes": [ 1, 5, 15 ], "lockedWaveMinutes": 10, "lockedLimitMinutes": 120 }
+}

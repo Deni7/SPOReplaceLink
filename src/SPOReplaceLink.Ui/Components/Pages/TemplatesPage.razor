@@ -1,0 +1,24 @@
+﻿@page "/templates"
+@inject SettingsService Settings
+@inject IFileSaver Saver
+@inject ISnackbar Snackbar
+
+<PageTitle>@L.T("Шаблони правил") — SPOReplaceLink</PageTitle>
+
+<SettingsList Kind="@SettingKinds.Template" Route="templates" Title="@L.T("Шаблони правил")" Help="с2-правила-заміни-шаблон" ExtraTitle="@L.T("Правил · використовується в")" Extra="Describe"> @* i18n-ignore: Help is a guide section id *@
+    <RowActions Context="name">
+        <MudTooltip Text="@L.T("Експорт правил у CSV")"><MudIconButton Icon="@Icons.Material.Filled.TableView" Size="Size.Small" OnClick="() => ExportCsv(name)" /></MudTooltip>
+    </RowActions>
+</SettingsList>
+
+@code {
+    private Task ExportCsv(string name) =>
+        SaveFile.Bytes(Saver, Snackbar, $"{SaveFile.Name(name)}.rules.csv", RuleImport.ToCsv(Settings.GetTemplate(name)?.Rules ?? []));
+
+    private string Describe(string name)
+    {
+        var t = Settings.GetTemplate(name);
+        var used = Settings.UsedBy(SettingKinds.Template, name);
+        return $"{t?.Rules.Count ?? 0} · {(used.Count == 0 ? L.T("ніде") : string.Join(", ", used))}";
+    }
+}

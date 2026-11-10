@@ -1,0 +1,56 @@
+@* THR-8: load of every app of the pool and of the tenant budget. *@
+<MudPaper Class="pa-3 mb-2" Elevation="1">
+    <MudText Typo="Typo.subtitle1">@L.T("Навантаження на SharePoint")</MudText>
+    <MudSimpleTable Dense="true">
+        <thead>
+            <tr>
+                <th>@L.T("Застосунок")</th><th>@L.T("Бюджет RU за хвилину")</th><th>@L.T("RU за 24 год")</th><th>@L.T("RU усього")</th><th>@L.T("Запитів")</th>
+                <th>429</th><th>503</th><th>@L.T("Паралельність")</th><th>@L.T("Файлів зараз")</th><th>@L.T("Стан")</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var a in Metrics.Apps)
+            {
+                <tr>
+                    <td><b>@a.Name</b></td>
+                    <td style="min-width:160px">
+                        <MudProgressLinear Value="@(a.MinuteUtilization * 100)" Color="@(a.MinuteUtilization > 0.9 ? Color.Warning : Color.Primary)" />
+                        <MudText Typo="Typo.caption">@L.F("{0:0}% з {1:0}", a.MinuteUtilization * 100, a.MinuteCapacity)</MudText>
+                    </td>
+                    <td>@Ui.N(a.RuLast24h)</td>
+                    <td>@Ui.N(a.RuSpent)</td>
+                    <td>@Ui.N(a.Requests)</td>
+                    <td>@Ui.N(a.Throttled429)</td>
+                    <td>@Ui.N(a.Throttled503)</td>
+                    <td>@a.ConcurrencyLimit</td>
+                    <td>@a.ActiveFiles</td>
+                    <td>
+                        @if (a.Blocked)
+                        {
+                            <MudChip T="string" Color="Color.Error" Size="Size.Small">@L.T("можливе блокування")</MudChip>
+                        }
+                        else if (a.PausedUntil is { } until)
+                        {
+                            <MudChip T="string" Color="Color.Warning" Size="Size.Small">@L.F("пауза до {0:HH:mm:ss}", until.ToLocalTime())</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Color="Color.Success" Size="Size.Small">@L.T("працює")</MudChip>
+                        }
+                    </td>
+                </tr>
+            }
+            <tr>
+                <td>@L.T("Тенант (стеля пулу)")</td>
+                <td><MudProgressLinear Value="@(Metrics.TenantUtilization * 100)" Color="@(Metrics.TenantUtilization > 0.9 ? Color.Warning : Color.Secondary)" />
+                    <MudText Typo="Typo.caption">@L.F("{0:0}% бюджету за 5 хв", Metrics.TenantUtilization * 100)</MudText></td>
+                <td colspan="2">@L.F("{0} RU усього", Ui.N(Metrics.TenantSpent))</td>
+                <td colspan="6"></td>
+            </tr>
+        </tbody>
+    </MudSimpleTable>
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public MetricsSnapshot Metrics { get; set; } = null!;
+}

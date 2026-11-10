@@ -1,0 +1,15 @@
+<MudDialog>
+    <DialogContent>
+        <MudNumericField T="int" Label="@L.T("Рівнів папок")" @bind-Value="Value" Min="1" Max="ReportExporter.MaxPrefixDepth" Immediate="true"
+                         HelperText="@L.T("Скільки рівнів під сайтом, сервером чи диском лишати в префіксі. 2 — сайт або бібліотека з першою папкою.")" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">@L.T("Скасувати")</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="Value is < 1 or > ReportExporter.MaxPrefixDepth" OnClick="() => MudDialog.Close(DialogResult.Ok(Value))">OK</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter] public int Value { get; set; } = ReportExporter.DefaultPrefixDepth;
+}

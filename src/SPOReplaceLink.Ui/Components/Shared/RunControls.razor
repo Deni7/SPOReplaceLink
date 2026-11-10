@@ -1,0 +1,165 @@
+﻿@* GUI-3: start, pause, continue, stop; retry and verify of a finished run; reports. *@
+@inject RunService Runs
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+@inject NavigationManager Nav
+@inject IFileSaver Saver
+
+@{
+    var run = Status.Run;
+    bool active = Status.Active;
+    bool finished = RunStatuses.IsFinished(run.Status);
+}
+<MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap">
+    @if (active && !Status.Paused)
+    {
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Pause" OnClick="Pause">@L.T("Пауза")</MudButton>
+    }
+    @if (active && Status.Paused)
+    {
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="Resume">@L.T("Продовжити")</MudButton>
+    }
+    @if (active)
+    {
+        <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop" OnClick="Stop">@L.T("Зупинити")</MudButton>
+    }
+    @if (!active && RunStatuses.CanContinue(run.Status))
+    {
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="Continue">
+            @(run.Status == RunStatuses.Created ? L.T("Запустити") : L.T("Продовжити прогін"))
+        </MudButton>
+    }
+    @if (!active && run.Status != RunStatuses.Created)
+    {
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Replay" OnClick="Retry">@L.T("Повторити…")</MudButton>
+    }
+    @if (finished && run.Mode == RunModes.Apply)
+    {
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.FactCheck" OnClick="Verify">@L.T("Перевірити (verify)")</MudButton>
+    }
+    <MudMenu Label="@L.T("Звіти")" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Download" Dense="true">
+        @foreach (var (name, title) in Reports)
+        {
+            <MudMenuItem OnClick="@(() => Report(name, "csv"))">@title — CSV</MudMenuItem>
+            <MudMenuItem OnClick="@(() => Report(name, "xlsx"))">@title — XLSX</MudMenuItem>
+        }
+        <MudMenuItem OnClick="@(() => Report("summary", "txt"))">@L.T("Підсумок") — TXT</MudMenuItem>
+        <MudMenuItem OnClick="@(() => Report("pilot", "txt"))">@L.T("Звіт пілоту") — TXT</MudMenuItem>
+        <MudMenuItem Href="help/310-звіти" Icon="@Icons.Material.Outlined.HelpOutline">@L.T("Що в цих звітах")</MudMenuItem>
+    </MudMenu>
+    @if (!active && run.Status is not (RunStatuses.Running or RunStatuses.Paused))
+    {
+        <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.DeleteOutline" OnClick="Delete">@L.T("Видалити…")</MudButton>
+    }
+</MudStack>
+
+@code {
+    [Parameter, EditorRequired] public RunStatus Status { get; set; } = null!;
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private static (string, string)[] Reports =>
+    [
+        ("files", L.T("Файли")), ("links", L.T("Посилання")), ("residuals", L.T("Залишки")), ("attention", L.T("Потребують уваги")), ("prefixes", L.T("Префікси")), ("sample", L.T("Вибірка для перевірки")),
+    ];
+
+    private int _prefixDepth = ReportExporter.DefaultPrefixDepth;
+
+    private async Task Report(string name, string format)
+    {
+        if (name == "prefixes")
+        {
+            var dialog = await Dialogs.ShowAsync<PrefixDepthDialog>(L.T("Глибина префіксів"), new DialogParameters<PrefixDepthDialog> { { x => x.Value, _prefixDepth } });
+            if (await dialog.Result is not { Canceled: false, Data: int depth })
+                return;
+            _prefixDepth = depth;
+        }
+        int prefixDepth = _prefixDepth;
+        await SaveFile.Run(Saver, Snackbar, Exports.ReportFileName(Status.Run.Id, name, format), s => Exports.WriteReport(Runs.Store, Status.Run.Id, name, format, s, prefixDepth));
+    }
+
+    private Task Pause() => Do(() => Runs.Pause(Status.Run.Id), L.T("Пауза: нові файли не беруться."));
+
+    private Task Resume() => Do(() => Runs.Resume(Status.Run.Id), L.T("Прогін продовжено."));
+
+    private async Task Stop()
+    {
+        bool? yes = await Dialogs.ShowMessageBox(L.T("Зупинити прогін?"),
+            L.T("Поточні вивантаження завершаться, решта файлів лишиться в черзі. Прогін можна буде продовжити."), yesText: L.T("Зупинити"), cancelText: L.T("Скасувати"));
+        if (yes == true)
+            await Do(() => Runs.Stop(Status.Run.Id), L.T("Зупинка: поточні файли завершуються…"));
+    }
+
+    private async Task Continue()
+    {
+        if (Status.Run.Mode == RunModes.Apply)
+        {
+            bool? yes = await Dialogs.ShowMessageBox(L.T("Продовжити apply?"),
+                L.F("Змінені файли буде записано в SharePoint. Залишилось файлів: {0}.", Ui.N(Status.NonFinal)), yesText: L.T("Продовжити"), cancelText: L.T("Скасувати"));
+            if (yes != true)
+                return;
+        }
+        await Do(() => Runs.Start(Status.Run.Id), L.T("Прогін запущено."));
+    }
+
+    private async Task Retry()
+    {
+        var parameters = new DialogParameters<RetryDialog> { { x => x.Parent, Status } };
+        var dialog = await Dialogs.ShowAsync<RetryDialog>(L.T("Повторний прогін"), parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false, Data: long id })
+            Nav.NavigateTo($"runs/{id}");
+    }
+
+    private void Verify()
+    {
+        try
+        {
+            long id = Runs.CreateChildRun(Status.Run.Id, new FileFilter { Statuses = [FileStatuses.Done] }, RunModes.Verify);
+            if (RunStatuses.CanContinue(Runs.Store.GetRun(id)!.Status))
+                Runs.Start(id);
+            Nav.NavigateTo($"runs/{id}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task Delete()
+    {
+        long id = Status.Run.Id;
+        long written = Runs.Store.CountWritten(id);
+        string text = L.F("Буде видалено прогін {0} з усіма його результатами: перелік файлів ({1}), статуси, спроби, знайдені посилання, метрики. Він зникне зі списку прогонів, звітів і з оцінки обсягу нових прогонів. Файлів у SharePoint це не змінює.",
+            id, Ui.N(Status.Files));
+        if (written > 0)
+            text += " " + L.F("Увага: прогін записав у SharePoint {0} файлів. Журнал цих змін і версії до запису, потрібні для відкату, буде втрачено; за потреби спершу вивантажте звіти.", Ui.N(written));
+        bool? yes = await Dialogs.ShowMessageBox(L.T("Видалити прогін?"), text, yesText: L.T("Видалити"), cancelText: L.T("Скасувати"));
+        if (yes != true)
+            return;
+        try
+        {
+            Runs.DeleteRun(id);
+            Snackbar.Add(L.F("Прогін {0} видалено.", id), Severity.Info);
+            Nav.NavigateTo("runs");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or KeyNotFoundException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+            await Changed.InvokeAsync();
+        }
+    }
+
+    private async Task Do(Action action, string message)
+    {
+        try
+        {
+            action();
+            Snackbar.Add(message, Severity.Info);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or KeyNotFoundException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        await Changed.InvokeAsync();
+    }
+}

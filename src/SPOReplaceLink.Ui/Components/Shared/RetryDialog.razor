@@ -1,0 +1,91 @@
+﻿@* GUI-8, RTY-4: new run over files of a finished run picked by filter or selection; the library is not listed again. *@
+@inject RunService Runs
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        @if (FileIds is { Count: > 0 })
+        {
+            <MudAlert Severity="Severity.Info" Class="mb-2">@L.F("Вибрано файлів: {0}", FileIds.Count)</MudAlert>
+        }
+        else
+        {
+            <MudSelect T="string" Label="@L.T("Статуси")" MultiSelection="true" @bind-SelectedValues="_statuses" Clearable="true"
+                       ToStringFunc="Ui.FileStatusFilter">
+                @foreach (var s in Ui.FileStatusFilters)
+                {
+                    <MudSelectItem Value="@s">@Ui.FileStatusFilter(s)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="string" Label="@L.T("Класи помилок")" MultiSelection="true" @bind-SelectedValues="_classes" Clearable="true" Class="mt-2">
+                @foreach (var c in Ui.ErrorClasses)
+                {
+                    <MudSelectItem Value="@c">@Ui.ErrorClass(c) (@c)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField T="string" Label="@L.T("Розширення (через кому)")" @bind-Value="_ext" Class="mt-2" />
+            <MudTextField T="string" Label="@L.T("Маска шляху (* і ?)")" @bind-Value="_mask" Class="mt-2" />
+        }
+        <MudSelect T="string" Label="@L.T("Режим")" @bind-Value="_mode" Class="mt-2">
+            @foreach (var m in RunModes.All)
+            {
+                <MudSelectItem Value="@m">@Ui.Mode(m)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudCheckBox T="bool" @bind-Value="_currentProfile" Label="@L.T("Взяти поточну версію профілю (наприклад, з доповненими правилами), а не знімок прогону")" Class="mt-2" />
+        <MudText Typo="Typo.caption" Class="mt-2 d-block">@L.T("Проігноровані файли не беруться. Кожен файл завантажується заново зі свіжою версією.")</MudText>
+    </DialogContent>
+    <DialogActions>
+        <HelpButton Section="35-повторний-прогін" Text="@L.T("Довідка")" />
+        <MudSpacer />
+        <MudButton OnClick="() => MudDialog.Cancel()">@L.T("Скасувати")</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Create">@L.T("Створити і запустити")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter] public RunStatus Parent { get; set; } = null!;
+    [Parameter] public IReadOnlyList<long>? FileIds { get; set; }
+    [Parameter] public IReadOnlyCollection<string>? Statuses { get; set; }
+
+    private IEnumerable<string> _statuses = ["failed"];
+    private IEnumerable<string> _classes = [];
+    private string? _ext;
+    private string? _mask;
+    private string _mode = RunModes.Apply;
+    private bool _currentProfile;
+
+    protected override void OnInitialized()
+    {
+        _mode = Parent.Run.Mode;
+        if (Statuses is { Count: > 0 })
+            _statuses = Statuses;
+    }
+
+    private void Create()
+    {
+        var filter = FileIds is { Count: > 0 }
+            ? new FileFilter { FileIds = [.. FileIds] }
+            : new FileFilter
+            {
+                Statuses = [.. _statuses],
+                ErrorClasses = [.. _classes],
+                Extensions = (_ext ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
+                PathMask = string.IsNullOrWhiteSpace(_mask) ? null : _mask,
+            };
+        try
+        {
+            long id = Runs.CreateChildRun(Parent.Run.Id, filter, _mode, _currentProfile);
+            long files = Runs.Store.CountFiles(id, new FileFilter());
+            if (files > 0)
+                Runs.Start(id);
+            Snackbar.Add(files > 0 ? L.F("Прогін {0}: файлів {1}.", id, files) : L.T("Жоден файл не відповідає фільтру."), files > 0 ? Severity.Success : Severity.Warning);
+            MudDialog.Close(DialogResult.Ok(id));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException or RunValidationException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+}

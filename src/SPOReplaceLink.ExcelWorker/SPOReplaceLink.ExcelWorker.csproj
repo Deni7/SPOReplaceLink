@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Two sides in one assembly: the worker process (Program, ExcelSession — drives one Excel instance over COM)
+    and what the host uses to run it (ExcelPool, ExcelStage). Projects that reference it get the worker exe
+    in their output folder.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>SPOReplaceLink.ExcelWorker</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SPOReplaceLink.OpenXml\SPOReplaceLink.OpenXml.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SPOReplaceLink.Engine.Tests" />
+    <InternalsVisibleTo Include="SPOReplaceLink.ExcelWorker.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,19 @@
+﻿@page "/connections"
+@inject SettingsService Settings
+
+<PageTitle>@L.T("Підключення") — SPOReplaceLink</PageTitle>
+
+<SettingsList Kind="@SettingKinds.Connection" Route="connections" Title="@L.T("Підключення до SharePoint")" Help="с1-перше-налаштування-доступу-до-sharepoint" ExtraTitle="@L.T("Застосунок · ліцензії · профілі")" Extra="Describe" /> @* i18n-ignore: Help is a guide section id *@
+
+<MudText Typo="Typo.caption" Class="mt-3 d-block">
+    @L.T("Підключення — це застосунок в Entra з дозволом Sites.Selected і сертифікатом. Секретів тут немає: сертифікат лежить у сховищі Windows, зберігається лише відбиток.")
+</MudText>
+
+@code {
+    private string Describe(string name)
+    {
+        var c = Settings.GetConnection(name);
+        var used = Settings.UsedBy(SettingKinds.Connection, name);
+        return c is null ? "" : $"{c.ClientId} · {c.Licenses} · {(used.Count == 0 ? "—" : string.Join(", ", used))}";
+    }
+}

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>spo-replace-link</AssemblyName>
+    <RootNamespace>SPOReplaceLink.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SPOReplaceLink.Core\SPOReplaceLink.Core.csproj" />
+    <ProjectReference Include="..\SPOReplaceLink.OpenXml\SPOReplaceLink.OpenXml.csproj" />
+    <ProjectReference Include="..\SPOReplaceLink.ExcelWorker\SPOReplaceLink.ExcelWorker.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SPOReplaceLink.Host.Tests" />
+  </ItemGroup>
+
+</Project>

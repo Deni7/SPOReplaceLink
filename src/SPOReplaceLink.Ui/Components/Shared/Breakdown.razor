@@ -1,0 +1,65 @@
+<MudPaper Class="pa-3" Elevation="1">
+    <MudText Typo="Typo.subtitle1">@Title</MudText>
+    @if (Rows.Count == 0)
+    {
+        <MudText Typo="Typo.caption">@L.T("Немає даних")</MudText>
+    }
+    else if (Stacked)
+    {
+        @* Long names (library addresses): the name gets the whole width, the numbers go under it. *@
+        @foreach (var r in Rows)
+        {
+            double percent = Percent(r);
+            <div class="breakdown-row">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Baseline" Spacing="2">
+                    <div style="min-width:0">
+                        <MudText Typo="Typo.body2" Class="wrap-anywhere"><b>@r.Key</b></MudText>
+                        @if (r.Detail is { Length: > 0 } detail)
+                        {
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary wrap-anywhere" Style="display:block">@detail</MudText>
+                        }
+                    </div>
+                    <MudText Typo="Typo.body2" Class="nowrap">@percent.ToString("0.0", Ui.Culture)%</MudText>
+                </MudStack>
+                <MudProgressLinear Value="percent" Color="Color.Primary" Rounded="true" Class="my-1" />
+                <MudText Typo="Typo.caption">
+                    @L.T("файлів") <b>@Ui.N(r.Total)</b> · @L.T("оброблено") <b>@Ui.N(r.Finished)</b> · @L.T("змінено") <b>@Ui.N(r.Changed)</b> ·
+                    @L.T("помилок") <b class="@(r.Failed > 0 ? "mud-error-text" : null)">@(r.Failed > 0 ? Ui.N(r.Failed) : "—")</b>
+                </MudText>
+            </div>
+        }
+    }
+    else
+    {
+        <MudSimpleTable Dense="true" Hover="true">
+            <thead>
+                <tr><th></th><th>@L.T("Файлів")</th><th>@L.T("Оброблено")</th><th>@L.T("Змінено")</th><th>@L.T("Помилки")</th><th style="width:20%;min-width:60px"></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var r in Rows)
+                {
+                    <tr>
+                        <td class="nowrap">@r.Key</td>
+                        <td>@Ui.N(r.Total)</td>
+                        <td>@Ui.N(r.Finished)</td>
+                        <td>@Ui.N(r.Changed)</td>
+                        <td>@(r.Failed > 0 ? Ui.N(r.Failed) : "—")</td>
+                        <td><MudProgressLinear Value="@Percent(r)" Color="Color.Primary" /></td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+</MudPaper>
+
+@code {
+    /// <param name="Detail">Second line under the name in the stacked view (the site of a library).</param>
+    public sealed record Row(string Key, long Total, long Finished, long Changed, long Failed, string? Detail = null);
+
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public IReadOnlyList<Row> Rows { get; set; } = [];
+    /// <summary>One block per row instead of a table, for long names.</summary>
+    [Parameter] public bool Stacked { get; set; }
+
+    private static double Percent(Row r) => r.Total > 0 ? 100.0 * r.Finished / r.Total : 0;
+}

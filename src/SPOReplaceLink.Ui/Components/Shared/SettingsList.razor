@@ -1,0 +1,137 @@
+﻿@* GUI-16: list of stored profiles / templates / connections with clone, delete, JSON import and export. *@
+@inject SettingsService Settings
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IFileSaver Saver
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3" Wrap="Wrap.Wrap">
+    <MudText Typo="Typo.h5">@Title</MudText>
+    @if (Help is not null)
+    {
+        <HelpButton Section="@Help" Text="@L.T("Як налаштувати")" />
+    }
+    <MudSpacer />
+    <MudFileUpload T="IBrowserFile" Accept=".json" FilesChanged="Import">
+        <ActivatorContent>
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Upload">@L.T("Імпорт JSON")</MudButton>
+        </ActivatorContent>
+    </MudFileUpload>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Href="@($"{Route}/~new")">@L.T("Створити")</MudButton>
+</MudStack>
+
+<MudTable Items="_items" Dense="true" Hover="true" T="(string Name, DateTimeOffset UpdatedAt)">
+    <HeaderContent>
+        <MudTh>@L.T("Назва")</MudTh><MudTh>@L.T("Змінено")</MudTh>
+        @if (Extra is not null)
+        {
+            <MudTh>@ExtraTitle</MudTh>
+        }
+        <MudTh></MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd><MudLink Href="@($"{Route}/{Uri.EscapeDataString(context.Name)}")">@context.Name</MudLink></MudTd>
+        <MudTd>@Ui.Time(context.UpdatedAt)</MudTd>
+        @if (Extra is not null)
+        {
+            <MudTd>@Extra(context.Name)</MudTd>
+        }
+        <MudTd Class="nowrap" Style="text-align:right">
+            @if (RowActions is not null)
+            {
+                @RowActions(context.Name)
+            }
+            <MudTooltip Text="@L.T("Експорт JSON")"><MudIconButton Icon="@Icons.Material.Filled.Download" Size="Size.Small" OnClick="() => Export(context.Name)" /></MudTooltip>
+            <MudTooltip Text="@L.T("Перейменувати")"><MudIconButton Icon="@Icons.Material.Filled.DriveFileRenameOutline" Size="Size.Small" OnClick="() => Rename(context.Name)" /></MudTooltip>
+            <MudTooltip Text="@L.T("Клонувати")"><MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small" OnClick="() => Clone(context.Name)" /></MudTooltip>
+            <MudTooltip Text="@L.T("Видалити")"><MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="() => Delete(context.Name)" /></MudTooltip>
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>@L.T("Поки порожньо.")</NoRecordsContent>
+</MudTable>
+
+@code {
+    [Parameter, EditorRequired] public string Kind { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Route { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+    [Parameter] public string? ExtraTitle { get; set; }
+    [Parameter] public Func<string, string>? Extra { get; set; }
+    [Parameter] public RenderFragment<string>? RowActions { get; set; }
+
+    /// <summary>Guide section on setting this kind up.</summary>
+    [Parameter] public string? Help { get; set; }
+
+    private IReadOnlyList<(string Name, DateTimeOffset UpdatedAt)> _items = [];
+
+    protected override void OnParametersSet() => _items = Settings.List(Kind);
+
+    private async Task Import(IBrowserFile? file)
+    {
+        if (file is null)
+            return;
+        try
+        {
+            using var reader = new StreamReader(file.OpenReadStream(5 * 1024 * 1024));
+            string json = await reader.ReadToEndAsync();
+            string name = System.Text.Json.Nodes.JsonNode.Parse(json, documentOptions: new() { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true })?["name"]?.GetValue<string>()
+                ?? Path.GetFileNameWithoutExtension(file.Name).Split('.')[0];
+            if (Settings.GetJson(Kind, name) is not null
+                && await Dialogs.ShowMessageBox(L.T("Замінити?"), L.F("«{0}» уже існує. Замінити імпортованим?", name), yesText: L.T("Замінити"), cancelText: L.T("Скасувати")) != true)
+                return;
+            var issues = Settings.SaveJson(Kind, name, json);
+            int errors = issues.Count(i => i.Severity == IssueSeverity.Error);
+            Snackbar.Add(errors == 0 ? L.F("Імпортовано «{0}».", name) : L.F("Імпортовано «{0}», помилок у налаштуваннях: {1} — див. редактор.", name, errors), errors == 0 ? Severity.Success : Severity.Warning);
+            _items = Settings.List(Kind);
+        }
+        catch (Exception ex) when (ex is ProfileException or System.Text.Json.JsonException or ArgumentException or IOException)
+        {
+            Snackbar.Add(L.F("Не імпортовано: {0}", ex.Message), Severity.Error);
+        }
+    }
+
+    private Task Export(string name) =>
+        SaveFile.Text(Saver, Snackbar, $"{SaveFile.Name(name)}.{Kind}.json", Settings.GetJson(Kind, name) ?? "{}");
+
+    private async Task Rename(string name)
+    {
+        var dialog = await Dialogs.ShowAsync<NameDialog>(L.T("Перейменувати"), new DialogParameters<NameDialog> { { x => x.Value, name } });
+        if (await dialog.Result is not { Canceled: false, Data: string newName })
+            return;
+        try
+        {
+            var updated = Settings.Rename(Kind, name, newName);
+            Snackbar.Add(updated.Count == 0 ? L.F("Перейменовано на «{0}».", newName) : L.F("Перейменовано на «{0}»; оновлено профілі: {1}.", newName, string.Join(", ", updated)), Severity.Success);
+            _items = Settings.List(Kind);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task Clone(string name)
+    {
+        var dialog = await Dialogs.ShowAsync<NameDialog>(L.T("Клонувати"), new DialogParameters<NameDialog> { { x => x.Value, name + " " + L.T("(копія)") } });
+        if (await dialog.Result is not { Canceled: false, Data: string newName })
+            return;
+        try
+        {
+            Settings.Clone(Kind, name, newName);
+            Nav.NavigateTo($"{Route}/{Uri.EscapeDataString(newName)}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private async Task Delete(string name)
+    {
+        var usedBy = Kind == SettingKinds.Profile ? [] : Settings.UsedBy(Kind, name);
+        string text = usedBy.Count > 0 ? L.F("Використовується в профілях: {0}. Вони перестануть проходити перевірку.", string.Join(", ", usedBy)) : L.T("Дію не можна скасувати (попередня версія лишиться в історії змін).");
+        if (await Dialogs.ShowMessageBox(L.F("Видалити «{0}»?", name), text, yesText: L.T("Видалити"), cancelText: L.T("Скасувати")) != true)
+            return;
+        Settings.Delete(Kind, name);
+        _items = Settings.List(Kind);
+    }
+}

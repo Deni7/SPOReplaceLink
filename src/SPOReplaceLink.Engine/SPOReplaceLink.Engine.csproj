@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SPOReplaceLink.Core\SPOReplaceLink.Core.csproj" />
+    <ProjectReference Include="..\SPOReplaceLink.OpenXml\SPOReplaceLink.OpenXml.csproj" />
+    <ProjectReference Include="..\SPOReplaceLink.Spo\SPOReplaceLink.Spo.csproj" />
+    <ProjectReference Include="..\SPOReplaceLink.State\SPOReplaceLink.State.csproj" />
+    <ProjectReference Include="..\SPOReplaceLink.ExcelWorker\SPOReplaceLink.ExcelWorker.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SPOReplaceLink.Engine.Tests" />
+  </ItemGroup>
+
+</Project>

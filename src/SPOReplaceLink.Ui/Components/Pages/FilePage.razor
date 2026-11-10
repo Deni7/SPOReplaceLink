@@ -1,0 +1,191 @@
+﻿@page "/files/{Id:long}"
+@* GUI-6: metadata, replacements, residuals, attempts, link to the file in SharePoint. *@
+@inject RunService Runs
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject SpoBrowser Browser
+@inject IFileSaver Saver
+
+<PageTitle>@L.F("Файл {0}", Id) — SPOReplaceLink</PageTitle>
+
+@if (_file is null)
+{
+    <MudAlert Severity="Severity.Warning">@L.F("Файл {0} не знайдено.", Id)</MudAlert>
+    return;
+}
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-2">
+    <MudLink Href="@($"runs/{_file.RunId}?tab=files")">@L.F("← прогін {0}", _file.RunId)</MudLink>
+    <MudText Typo="Typo.h6" Class="wrap-anywhere">@(_file.Path ?? _file.Name)</MudText>
+    <MudChip T="string" Color="Ui.FileColor(_file.StatusCode)">@_file.StatusCode</MudChip>
+    <HelpButton Section="37-таблиця-файлів-помилки-картка-файлу" />
+    <MudSpacer />
+    @if (_url is not null)
+    {
+        <MudButton Href="@_url" Target="_blank" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.OpenInNew">@L.T("Відкрити в SharePoint")</MudButton>
+    }
+    @if (_file.VersionBefore is { } version && _connection is not null)
+    {
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.History" OnClick="SaveVersionBefore" Disabled="_downloading">
+            @(_downloading ? L.T("Завантаження…") : L.F("Зберегти версію до зміни ({0})", version))
+        </MudButton>
+    }
+    @if (_file.Status != FileStatuses.Ignored && FileStatuses.IsFinal(_file.Status))
+    {
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Block" OnClick="Ignore">@L.T("Ігнорувати")</MudButton>
+    }
+</MudStack>
+
+<MudGrid Spacing="2">
+    <MudItem xs="12" md="5">
+        <MudPaper Class="pa-3" Elevation="1">
+            <MudSimpleTable Dense="true">
+                <tbody>
+                    <tr><td>@L.T("Розмір")</td><td>@Ui.Size(_file.Size)</td></tr>
+                    <tr><td>@L.T("Змінено в SPO")</td><td>@Ui.Time(_file.Modified) @_file.ModifiedBy</td></tr>
+                    <tr><td>@L.T("Спроб")</td><td>@_file.Attempts</td></tr>
+                    <tr><td>@L.T("Застосунок")</td><td>@_file.App</td></tr>
+                    <tr><td>@L.T("Версія до запису")</td><td>@(_file.VersionBefore ?? "—") <MudText Typo="Typo.caption">@L.T("(кнопка вгорі зберігає її копію; відновити — «Журнал версій» файлу в SharePoint)")</MudText></td></tr>
+                    <tr><td>@L.T("eTag після запису")</td><td class="mono">@_file.ETagAfter</td></tr>
+                    <tr><td>@L.T("Клас помилки")</td><td>@Ui.ErrorClass(_file.ErrorClass)</td></tr>
+                    <tr><td>@L.T("Повідомлення")</td><td class="wrap-anywhere">@_file.Error</td></tr>
+                    @if (_file.Comment is { } comment)
+                    {
+                        <tr><td>@L.T("Коментар")</td><td>@comment</td></tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="7">
+        <MudPaper Class="pa-3" Elevation="1">
+            <MudText Typo="Typo.subtitle1">@L.T("Історія спроб")</MudText>
+            <MudSimpleTable Dense="true">
+                <thead><tr><th>@L.T("Час")</th><th>№</th><th>@L.T("Етап")</th><th>@L.T("Результат")</th><th>HTTP</th><th>request-id</th><th>@L.T("Застосунок")</th></tr></thead>
+                <tbody>
+                    @foreach (var a in _attempts)
+                    {
+                        <tr>
+                            <td class="nowrap">@Ui.Time(a.At)</td><td>@a.Attempt</td><td>@a.Stage</td>
+                            <td class="wrap-anywhere">@(a.ErrorClass is null ? a.Message : $"{Ui.ErrorClass(a.ErrorClass)}: {a.Message}")</td>
+                            <td>@a.HttpStatus</td><td class="mono">@a.RequestId</td><td>@a.App</td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12">
+        <MudPaper Class="pa-3" Elevation="1">
+            <MudText Typo="Typo.subtitle1">@L.F("Посилання ({0})", _links.Count)</MudText>
+            <MudTable Items="_links" Dense="true" Hover="true" T="Core.Processing.LinkRecord">
+                <HeaderContent><MudTh>@L.T("Дія")</MudTh><MudTh>@L.T("Місце")</MudTh><MudTh>@L.T("Частина")</MudTh><MudTh>@L.T("Старе значення")</MudTh><MudTh>@L.T("Нове значення")</MudTh><MudTh>@L.T("Правило")</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.Action</MudTd>
+                    <MudTd>@Ui.LinkKind(context.Kind.ToString())</MudTd>
+                    <MudTd class="mono">@context.Part</MudTd>
+                    <MudTd class="mono">@context.OldValue
+                        @if (context.ResolvedFrom is { } rf)
+                        {
+                            <br /><MudText Typo="Typo.caption">@L.F("розв'язано як {0}", rf)</MudText>
+                        }
+                    </MudTd>
+                    <MudTd class="mono">@context.NewValue</MudTd>
+                    <MudTd>@context.RuleIndex</MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudPaper>
+    </MudItem>
+    @if (_residuals.Count > 0)
+    {
+        <MudItem xs="12">
+            <MudPaper Class="pa-3" Elevation="1">
+                <MudText Typo="Typo.subtitle1">@L.F("Залишки старих префіксів ({0})", _residuals.Count)</MudText>
+                <MudSimpleTable Dense="true">
+                    <thead><tr><th>@L.T("Частина")</th><th>@L.T("Кодування")</th><th>@L.T("Збіг")</th><th>@L.T("Контекст")</th></tr></thead>
+                    <tbody>
+                        @foreach (var r in _residuals)
+                        {
+                            <tr><td class="mono">@r.Part</td><td>@r.Encoding</td><td class="mono">@r.Match</td><td class="mono">@r.Context</td></tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            </MudPaper>
+        </MudItem>
+    }
+</MudGrid>
+
+@code {
+    [Parameter] public long Id { get; set; }
+
+    private FileRow? _file;
+    private IReadOnlyList<Core.Processing.LinkRecord> _links = [];
+    private IReadOnlyList<Core.Processing.Residual> _residuals = [];
+    private IReadOnlyList<AttemptRow> _attempts = [];
+    private string? _url;
+    private string? _connection;
+    private bool _downloading;
+
+    protected override void OnParametersSet() => Load();
+
+    private void Load()
+    {
+        _file = Runs.Store.GetFile(Id);
+        if (_file is null)
+            return;
+        _links = Runs.Store.GetLinks(Id);
+        _residuals = Runs.Store.GetResiduals(Id);
+        _attempts = Runs.Store.GetAttempts(Id);
+        if (Runs.Store.GetRun(_file.RunId) is { } run)
+            _connection = RunConfig.Parse(run.ConfigSnapshot).Profile.Connections.FirstOrDefault();
+        var target = Runs.Store.GetTargets(_file.RunId).FirstOrDefault(t => t.Index == _file.TargetIndex);
+        _url = target?.DriveUrl is { } drive && _file.Path is { } path
+            ? drive.TrimEnd('/') + "/" + string.Join('/', path.Split('/').Select(Uri.EscapeDataString))
+            : null;
+    }
+
+    /// <summary>GUI-6: a copy of the version that was in SharePoint before the tool wrote the file.</summary>
+    private async Task SaveVersionBefore()
+    {
+        var file = _file!;
+        string temp = Path.Combine(Path.GetTempPath(), $"spo-rl-version-{Guid.NewGuid():N}");
+        _downloading = true;
+        try
+        {
+            using (var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10)))
+                await Browser.DownloadVersionAsync(_connection!, file.DriveId, file.ItemId, file.VersionBefore!, temp, cts.Token);
+            string name = L.F("{0} (версія {1}){2}", Path.GetFileNameWithoutExtension(file.Name), file.VersionBefore, Path.GetExtension(file.Name));
+            await SaveFile.Run(Saver, Snackbar, name, s =>
+            {
+                using var source = File.OpenRead(temp);
+                source.CopyTo(s);
+            });
+        }
+        catch (Exception ex) when (ex is Spo.SpoException or KeyNotFoundException or OperationCanceledException or IOException)
+        {
+            Snackbar.Add(L.T("Версію не завантажено: ") + ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _downloading = false;
+            try
+            {
+                File.Delete(temp);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    private async Task Ignore()
+    {
+        var dialog = await Dialogs.ShowAsync<CommentDialog>(L.T("Ігнорувати файл"), new DialogParameters<CommentDialog> { { x => x.Text, L.T("Файл не братиметься в наступні повтори.") } });
+        if (await dialog.Result is { Canceled: false, Data: string comment })
+        {
+            Runs.Store.Ignore(Id, comment, DateTimeOffset.UtcNow);
+            Snackbar.Add(L.T("Позначено ignored."), Severity.Info);
+            Load();
+        }
+    }
+}

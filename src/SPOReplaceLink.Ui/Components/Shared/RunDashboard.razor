@@ -1,0 +1,328 @@
+﻿@implements IDisposable
+@inject StatusService StatusService
+@inject RunService Runs
+
+@if (_status is null)
+{
+    <MudProgressCircular Indeterminate="true" />
+    return;
+}
+
+@{
+    var s = _status;
+    var run = s.Run;
+    long done = s.Files - s.NonFinal;
+    double percent = s.Files > 0 ? 100.0 * done / s.Files : 0;
+    long failed = s.Counts.Where(c => c.Key.StartsWith("failed:", StringComparison.Ordinal)).Sum(c => c.Value);
+    long changed = Count(FileStatuses.Done) + Count(FileStatuses.Planned);
+    long unchanged = Count(FileStatuses.Unchanged) + Count(FileStatuses.Verified);
+    long deferred = Count(FileStatuses.Deferred);
+    long residual = s.Counts.Where(c => c.Key.EndsWith(":residual", StringComparison.Ordinal)).Sum(c => c.Value);
+}
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-2">
+    <MudText Typo="Typo.h5">@L.F("Прогін {0}", run.Id)</MudText>
+    <HelpButton Section="36-дашборд-і-картка-прогону" />
+    <MudChip T="string" @key="run.Status" Color="Ui.RunColor(run.Status)" Size="Size.Small">@Ui.RunStatus(run.Status)@(s.Paused ? " (" + L.T("пауза") + ")" : "")</MudChip>
+    <MudText Typo="Typo.body2">@Ui.Mode(run.Mode) · @L.T("профіль") <b>@run.ProfileName</b>@(run.ParentId is { } p ? " · " + L.F("повтор прогону {0}", p) : "")</MudText>
+    <MudSpacer />
+    <RunControls Status="s" Changed="Refresh" />
+</MudStack>
+
+@if (run.StopReason is { Length: > 0 } reason && run.Status is RunStatuses.Aborted or RunStatuses.Stopped)
+{
+    <MudAlert Severity="@(run.Status == RunStatuses.Aborted ? Severity.Error : Severity.Info)" Class="mb-2">@reason</MudAlert>
+}
+
+<MudPaper Class="pa-3 mb-3" Elevation="1">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+        <MudText Typo="Typo.body2">@L.T("Оброблено") <b>@Ui.N(done)</b> @L.T("з") <b>@Ui.N(s.Files)</b> (@percent.ToString("0.0", Ui.Culture)%)</MudText>
+        <MudText Typo="Typo.body2">@L.T("Початок:") @Ui.Time(run.StartedAt) · @L.T("тривалість:") @Ui.Duration((run.FinishedAt ?? DateTimeOffset.UtcNow) - (run.StartedAt ?? run.CreatedAt))
+            @if (StatusService.Eta(s) is { } eta)
+            {
+                <span> · @L.T("до завершення") ≈ <b>@Ui.Duration(eta)</b></span>
+            }
+        </MudText>
+    </MudStack>
+    <MudProgressLinear Color="Color.Primary" Value="percent" Size="Size.Large" Class="mt-2" Rounded="true" />
+</MudPaper>
+
+<MudGrid Spacing="2" Class="mb-2">
+    <StatCard Title="@L.T("Знайдено файлів")" Value="@Ui.N(s.Live?.Found ?? s.Files)" />
+    @if (run.Mode == RunModes.Verify)
+    {
+        <StatCard Title="@L.T("Ще треба змінити")" Value="@Ui.N(Count(FileStatuses.ChangesPending))" Hint="@L.T("verify знайшов посилання, які apply ще змінив би")"
+                  Color="@(Count(FileStatuses.ChangesPending) > 0 ? Color.Warning : Color.Success)" />
+    }
+    else
+    {
+        <StatCard Title="@L.T("Змінено")" Value="@Ui.N(changed)" Hint="@(run.Mode == RunModes.Apply ? L.T("записано в SharePoint") : L.T("буде змінено"))" Color="Color.Success" />
+    }
+    <StatCard Title="@L.T("Без змін")" Value="@Ui.N(unchanged)" />
+    <StatCard Title="@L.T("Замін посилань")" Value="@Ui.N(s.Replacements)" Hint="@KindsHint()" />
+    <StatCard Title="@L.T("Помилки")" Value="@Ui.N(failed)" Hint="@ErrorsHint()" Color="@(failed > 0 ? Color.Error : Color.Default)" Href="@($"runs/{run.Id}?tab=errors&show=failed")" />
+    <StatCard Title="@L.T("Відкладено")" Value="@Ui.N(deferred)" Hint="@L.T("заблоковані, чекають хвилі")" Color="@(deferred > 0 ? Color.Warning : Color.Default)" />
+    <StatCard Title="@L.T("З залишками")" Value="@Ui.N(residual)" Hint="@L.T("старі префікси лишились")" Color="@(residual > 0 ? Color.Warning : Color.Default)" />
+    <StatCard Title="@L.T("Потребують уваги")" Value="@Ui.N(s.Attention)" Color="@(s.Attention > 0 ? Color.Warning : Color.Default)" Href="@($"runs/{run.Id}?tab=errors&show=attention")" />
+    @if (s.Live is { } live)
+    {
+        <StatCard Title="@L.T("Швидкість")" Value="@L.F("{0:0} файл/хв", live.FilesPerMinute)" Hint="@L.F("{0:0.00} МБ/с", live.MegabytesPerSecond)" />
+        <StatCard Title="@L.T("Активні обробники")" Value="@live.ActiveWorkers.ToString(Ui.Culture)" Hint="@ThrottleHint(live)" />
+        @if (live.Excel is { } excel)
+        {
+            <StatCard Title="Excel (xls, xlsb)" Value="@(excel.Unavailable is null ? L.F("{0} / {1} з {2}", excel.Busy, excel.Running, excel.Limit) : L.T("недоступний"))"
+                      Hint="@ExcelHint(excel)" Color="@(excel.Unavailable is not null || excel.Timeouts + excel.Crashes > 0 ? Color.Warning : Color.Default)" />
+        }
+    }
+</MudGrid>
+
+@if (s.Live is { Apps.Count: > 0 } liveApps)
+{
+    <AppLoadPanel Metrics="liveApps" />
+}
+
+<MudPaper Class="pa-3 mt-1 mb-3" Elevation="1">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2">
+        <MudText Typo="Typo.subtitle1">@L.T("Динаміка")</MudText>
+        <MudSpacer />
+        @if (_times.Length >= 2)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">@L.T("Виділіть ділянку мишею, щоб збільшити; подвійний клік — увесь прогін.")</MudText>
+            <MudButtonGroup Size="Size.Small" Variant="Variant.Outlined">
+                @foreach (var (label, period) in Periods)
+                {
+                    <MudButton OnClick="@(() => _progressChart!.ShowLast(period))">@label</MudButton>
+                }
+            </MudButtonGroup>
+        }
+    </MudStack>
+    @if (_times.Length >= 2)
+    {
+        <MudGrid Spacing="2" Class="mt-1">
+            <MudItem xs="12" lg="6">
+                <MudText Typo="Typo.body2" Class="mb-1"><b>@L.T("Прогрес")</b></MudText>
+                <TimeChart @ref="_progressChart" Group="@($"run-{RunId}")" Times="_times" Data="_progress" />
+            </MudItem>
+            <MudItem xs="12" lg="6">
+                <MudText Typo="Typo.body2" Class="mb-1"><b>@L.T("Швидкість і помилки")</b> <span class="mud-text-secondary">@L.T("(помилки — права шкала)")</span></MudText>
+                <TimeChart Group="@($"run-{RunId}")" Times="_times" Data="_speed" />
+            </MudItem>
+        </MudGrid>
+    }
+    else
+    {
+        <MudText Typo="Typo.caption">@L.T("Графіки з'являться через кілька хвилин прогону (знімок раз на хвилину).")</MudText>
+    }
+</MudPaper>
+
+<MudGrid Spacing="2">
+    <MudItem xs="12" md="6">
+        <Breakdown Title="@L.T("За форматами")" Rows="_byFormat" />
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <Breakdown Title="@L.T("За цілями (бібліотеками)")" Rows="_byTarget" Stacked="true" />
+    </MudItem>
+</MudGrid>
+
+@code {
+    [Parameter, EditorRequired] public long RunId { get; set; }
+
+    /// <summary>XLS-4: state of the Excel pool — busy / running processes, operations, hangs and crashes.</summary>
+    private static string ExcelHint(ExcelSnapshot excel) => excel.Unavailable
+        ?? L.F("зайнято / запущено; операцій {0}, зависань {1}, падінь {2}", Ui.N(excel.Operations), excel.Timeouts, excel.Crashes)
+        + (excel.Dialogs > 0 ? ", " + L.F("закритих діалогів {0}", excel.Dialogs) : "");
+
+    private RunStatus? _status;
+    private IReadOnlyDictionary<string, long> _kinds = new Dictionary<string, long>();
+    private static (string Label, TimeSpan? Period)[] Periods =>
+        [(L.T("1 год"), TimeSpan.FromHours(1)), (L.T("6 год"), TimeSpan.FromHours(6)), (L.T("24 год"), TimeSpan.FromDays(1)), (L.T("Усе"), null)];
+
+    private IReadOnlyList<TimeChart.Series> _progress = [];
+    private IReadOnlyList<TimeChart.Series> _speed = [];
+    private double[] _times = [];
+    private TimeChart? _progressChart;
+    private List<Breakdown.Row> _byFormat = [];
+    private List<Breakdown.Row> _byTarget = [];
+    private Timer? _timer;
+    private DateTimeOffset _slowRefresh = DateTimeOffset.MinValue;
+    private long _shownRun;
+    private string? _lastStatus;
+    private volatile bool _slowLoading;
+
+    protected override void OnParametersSet()
+    {
+        if (_shownRun != RunId)
+        {
+            _shownRun = RunId;
+            _slowRefresh = DateTimeOffset.MinValue;
+            Load();
+        }
+        _timer ??= new Timer(_ => InvokeAsync(() => { Load(); StateHasChanged(); }), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private void Refresh()
+    {
+        _slowRefresh = DateTimeOffset.MinValue;
+        Load(fresh: true);
+        StateHasChanged();
+    }
+
+    private void Load(bool fresh = false)
+    {
+        _status = StatusService.Get(RunId, fresh);
+        if (_status is null)
+            return;
+        // Heavier queries less often: charts and breakdowns every 15 seconds, and at once when the run changes its status.
+        bool statusChanged = _status.Run.Status != _lastStatus;
+        _lastStatus = _status.Run.Status;
+        if (!statusChanged && DateTimeOffset.UtcNow - _slowRefresh < TimeSpan.FromSeconds(15))
+            return;
+        _slowRefresh = DateTimeOffset.UtcNow;
+        _ = LoadSlowAsync();
+    }
+
+    /// <summary>
+    /// Replacements by place, breakdowns and charts read many rows on large runs; they are loaded off the UI thread,
+    /// so the counters appear at once and these parts follow a moment later.
+    /// </summary>
+    private async Task LoadSlowAsync()
+    {
+        if (_slowLoading)
+            return;
+        _slowLoading = true;
+        try
+        {
+            long runId = RunId;
+            var loaded = await Task.Run(() =>
+            {
+                var targets = RunConfigTargets();
+                var kinds = Runs.Store.ReplacementsByKind(runId);
+                var byFormat = Runs.Store.BreakdownBy(runId, "ext").Select(b => new Breakdown.Row(b.Key.TrimStart('.'), b.Total, b.Finished, b.Changed, b.Failed)).ToList();
+                var byTarget = Runs.Store.BreakdownBy(runId, "target_idx").Select(b => ToTargetRow(b, targets)).ToList();
+                return (kinds, byFormat, byTarget, charts: Charts(Runs.Store, runId));
+            });
+            if (runId != RunId)
+                return;
+            await InvokeAsync(() =>
+            {
+                (_kinds, _byFormat, _byTarget) = (loaded.kinds, loaded.byFormat, loaded.byTarget);
+                (_times, _progress, _speed) = loaded.charts;
+                StateHasChanged();
+            });
+        }
+        finally
+        {
+            _slowLoading = false;
+        }
+    }
+    private List<Target> RunConfigTargets()
+    {
+        var run = Runs.Store.GetRun(RunId);
+        if (run is null)
+            return [];
+        try
+        {
+            return RunConfig.Parse(run.ConfigSnapshot).Profile.Targets;
+        }
+        catch (ProfileException)
+        {
+            return [];
+        }
+    }
+
+    // A library is named by itself and its folder; the site goes on the second line, so a long address does not squeeze the numbers.
+    private static Breakdown.Row ToTargetRow(StateStore.Breakdown b, List<Target> targets)
+    {
+        if (!int.TryParse(b.Key, out int i) || i >= targets.Count)
+            return new(b.Key, b.Total, b.Finished, b.Changed, b.Failed);
+        var t = targets[i];
+        string name = string.IsNullOrEmpty(t.Folder) ? t.Library ?? b.Key : $"{t.Library} / {t.Folder.Trim('/')}";
+        return new(name, b.Total, b.Finished, b.Changed, b.Failed, t.SiteUrl?.TrimEnd('/'));
+    }
+
+    private static (double[] Times, IReadOnlyList<TimeChart.Series> Progress, IReadOnlyList<TimeChart.Series> Speed) Charts(StateStore store, long runId)
+    {
+        var points = store.GetMetrics(runId)
+            .Select(m => (m.At, Data: ParseMetrics(m.Json)))
+            .Where(m => m.Data is not null)
+            .Select(m => (m.At, Data: m.Data!))
+            .ToList();
+        var times = points.Select(p => p.At.ToUnixTimeMilliseconds() / 1000.0).ToArray();
+        // Speed between neighbouring snapshots, not the average since the start: a slowdown shows at once.
+        // A gap (the app was closed, the run paused) breaks the line instead of drawing a low average across it.
+        var rate = points.Select((p, i) =>
+        {
+            if (i == 0)
+                return (double?)null;
+            var prev = points[i - 1];
+            double minutes = (p.At - prev.At).TotalMinutes;
+            long delta = p.Data.Finished - prev.Data.Finished;
+            return minutes is > 0 and <= 5 && delta >= 0 ? Math.Round(delta / minutes, 1) : null;
+        }).ToArray();
+        // Errors from the stored attempts, not the in-memory counter: it went back to zero after a stop and continue,
+        // and it counted every failed try, so the line was far above the «Помилки» card.
+        var (failedAt, retriedAt) = store.ErrorTimeline(runId);
+        double?[] UpTo(IReadOnlyList<DateTimeOffset> events) => points.Select(p => (double?)CountUpTo(events, p.At)).ToArray();
+        TimeChart.Series[] progress =
+        [
+            new(L.T("Оброблено"), "#0f6cbd", points.Select(p => (double?)p.Data.Finished).ToArray()),
+            new(L.T("Знайдено"), "#1ec8a5", points.Select(p => (double?)p.Data.Found).ToArray()),
+        ];
+        TimeChart.Series[] speed =
+        [
+            new(L.T("Файлів/хв"), "#0f6cbd", rate),
+            new(L.T("Файлів з помилкою"), "#d13438", UpTo(failedAt), "n"),
+            new(L.T("Повторів"), "#8764b8", UpTo(retriedAt), "n"),
+            new("429/503", "#f7a000", points.Select(p => (double?)p.Data.Apps.Sum(a => a.Throttled429 + a.Throttled503)).ToArray(), "n"),
+        ];
+        return (times, progress, speed);
+    }
+
+    /// <summary>How many of the sorted <paramref name="events"/> happened by <paramref name="at"/>.</summary>
+    private static int CountUpTo(IReadOnlyList<DateTimeOffset> events, DateTimeOffset at)
+    {
+        int lo = 0, hi = events.Count;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) / 2;
+            if (events[mid] <= at)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        return lo;
+    }
+
+    // A damaged snapshot must not break the dashboard: it is just left out of the charts.
+    private static MetricsSnapshot? ParseMetrics(string json)
+    {
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<MetricsSnapshot>(json, Profile.JsonOptions);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    private long Count(string status) => _status!.Counts.Where(c => c.Key == status || c.Key.StartsWith(status + ":", StringComparison.Ordinal)).Sum(c => c.Value);
+
+    private string KindsHint() => _kinds.Count == 0 ? "—" : string.Join(", ", _kinds.OrderByDescending(k => k.Value).Select(k => $"{Ui.LinkKind(k.Key)}: {Ui.N(k.Value)}"));
+
+    private string ErrorsHint()
+    {
+        var byClass = _status!.Counts.Where(c => c.Key.StartsWith("failed:", StringComparison.Ordinal)).OrderByDescending(c => c.Value).ToList();
+        return byClass.Count == 0 ? L.T("немає") : string.Join(", ", byClass.Select(c => $"{Ui.ErrorClass(c.Key[7..])}: {Ui.N(c.Value)}"));
+    }
+
+    private static string ThrottleHint(MetricsSnapshot live)
+    {
+        var paused = live.Apps.Where(a => a.PausedUntil is not null).Select(a => a.Name).ToList();
+        if (live.Apps.Any(a => a.Blocked))
+            return L.T("є заблоковані застосунки");
+        return paused.Count > 0 ? L.F("throttling: пауза {0}", string.Join(", ", paused)) : L.T("throttling немає");
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}
