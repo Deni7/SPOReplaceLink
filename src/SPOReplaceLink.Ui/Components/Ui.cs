@@ -93,6 +93,8 @@ public static class Ui
         "Formula" => L.T("формули"),
         "CachedValue" => L.T("кеш формул"),
         "OtherExternal" => L.T("інші зовнішні"),
+        "Connection" => L.T("підключення до даних"),
+        "PowerQuery" => "Power Query",
         "WorkbookPath" => L.T("шлях збереження"),
         _ => kind,
     };

@@ -114,13 +114,16 @@ public sealed partial class WorkbookProcessor
         public bool NeedsExcel { get; set; }
     }
 
-    private enum PartKind { Rels, ExternalLink, Sheet, Workbook, OtherXml, Binary, Skip }
+    private enum PartKind { Rels, ExternalLink, Sheet, Workbook, Connections, CustomXml, OtherXml, Binary, Skip }
 
     [GeneratedRegex(@"^xl/externalLinks/externalLink\d+\.xml$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ExternalLinkPart();
 
     [GeneratedRegex(@"^xl/(worksheets|macrosheets|dialogsheets)/[^/]+\.xml$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SheetPart();
+
+    [GeneratedRegex(@"^customXml/item\d+\.xml$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CustomXmlItem();
 
     private static PartKind KindOf(string name)
     {
@@ -132,6 +135,10 @@ public sealed partial class WorkbookProcessor
             return PartKind.Sheet;
         if (name.Equals("xl/workbook.xml", StringComparison.OrdinalIgnoreCase))
             return PartKind.Workbook;
+        if (name.Equals("xl/connections.xml", StringComparison.OrdinalIgnoreCase))
+            return PartKind.Connections;
+        if (CustomXmlItem().IsMatch(name))
+            return PartKind.CustomXml;
         string ext = Path.GetExtension(name).ToLowerInvariant();
         return ext switch
         {
@@ -156,7 +163,7 @@ public sealed partial class WorkbookProcessor
             byte[] bytes = ReadAll(entry);
             switch (kind)
             {
-                case PartKind.Rels or PartKind.ExternalLink or PartKind.Sheet:
+                case PartKind.Rels or PartKind.ExternalLink or PartKind.Sheet or PartKind.Connections:
                 {
                     var text = PartText.Decode(bytes);
                     var ctx = new LinkContext(_rules, _places, documentFolder, name, local);
@@ -172,6 +179,24 @@ public sealed partial class WorkbookProcessor
                     var text = PartText.Decode(bytes);
                     workbook = (name, text);
                     plan.Residuals.AddRange(_scanner.ScanText(name, PartRewriters.MaskWorkbookPath(text.Text)));
+                    break;
+                }
+                case PartKind.CustomXml:
+                {
+                    var text = PartText.Decode(bytes);
+                    if (!PowerQuery.IsMashup(text.Text))
+                    {
+                        plan.Residuals.AddRange(_scanner.ScanText(name, text.Text));
+                        break;
+                    }
+                    var ctx = new LinkContext(_rules, _places, documentFolder, name, local);
+                    string updated = PowerQuery.Rewrite(text.Text, ctx);
+                    plan.Links.AddRange(ctx.Links);
+                    if (ctx.Changes > 0)
+                        plan.Changed[name] = text.Encode(updated);
+                    // The formulas are base64 in the part: old prefixes are looked for in the decoded texts.
+                    foreach (var (inner, content) in PowerQuery.Contents(updated))
+                        plan.Residuals.AddRange(_scanner.ScanText(name + "!" + inner, content));
                     break;
                 }
                 case PartKind.OtherXml:
@@ -237,6 +262,8 @@ public sealed partial class WorkbookProcessor
         PartKind.ExternalLink => PartRewriters.RewriteExternalLink(text, ctx),
         PartKind.Sheet => PartRewriters.RewriteSheet(text, ctx),
         PartKind.Workbook => PartRewriters.RewriteWorkbookPath(text, ctx),
+        PartKind.Connections => PartRewriters.RewriteConnections(text, ctx),
+        PartKind.CustomXml => PowerQuery.Rewrite(text, ctx),
         _ => text,
     };
 

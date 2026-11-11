@@ -42,6 +42,8 @@
                             <MudSwitch T="bool" Label="Hyperlinks" Value="_run.Places.Hyperlinks" ValueChanged="v => Edit(() => _run.Places.Hyperlinks = v)" Color="Color.Primary" />
                             <MudSwitch T="bool" Label="Link Sources" Value="_run.Places.LinkSources" ValueChanged="v => Edit(() => _run.Places.LinkSources = v)" Color="Color.Primary" />
                             <MudSwitch T="bool" Label="@L.T("Формули")" Value="_run.Places.Formulas" ValueChanged="v => Edit(() => _run.Places.Formulas = v)" Color="Color.Primary" />
+                            <MudSwitch T="bool" Label="@L.T("Підключення до даних")" Value="_run.Places.Connections" ValueChanged="v => Edit(() => _run.Places.Connections = v)" Color="Color.Primary" />
+                            <MudSwitch T="bool" Label="Power Query" Value="_run.Places.PowerQuery" ValueChanged="v => Edit(() => _run.Places.PowerQuery = v)" Color="Color.Primary" />
                             <MudSwitch T="bool" Label="@L.T("Працювати лише у вікнах")" Value="_run.Performance.OnlyInWindows" ValueChanged="v => Edit(() => _run.Performance.OnlyInWindows = v)" Color="Color.Primary" />
                         </MudItem>
                         @if (Changed)

@@ -156,8 +156,8 @@
                 <tr><td>@L.T("Формули (HYPERLINK, INDIRECT) і їхні кешовані значення")</td><td>@L.T("так")</td><td>@L.T("через Excel")</td><td>@L.T("через Excel")</td><td><MudSwitch T="bool" @bind-Value="_p.Places.Formulas" Color="Color.Primary" /></td></tr>
                 <tr><td>@L.T("Інші зовнішні зв'язки (OLE, пов'язані зображення)")</td><td>@L.T("так")</td><td>@L.T("так")</td><td>@L.T("через Excel")</td><td><MudSwitch T="bool" @bind-Value="_p.Places.OtherExternal" Color="Color.Primary" /></td></tr>
                 <tr><td>@L.T("Pivot-кеші")</td><td colspan="3">@L.T("ще не реалізовано")</td><td><MudSwitch T="bool" Value="false" Disabled="true" /></td></tr>
-                <tr><td>@L.T("Підключення до даних (connections)")</td><td colspan="3">@L.T("ще не реалізовано")</td><td><MudSwitch T="bool" Value="false" Disabled="true" /></td></tr>
-                <tr><td>Power Query</td><td colspan="3">@L.T("ще не реалізовано")</td><td><MudSwitch T="bool" Value="false" Disabled="true" /></td></tr>
+                <tr><td>@L.T("Підключення до даних (рядки підключення, SQL-команди, .odc, веб-запити)")</td><td>@L.T("так")</td><td>@L.T("через Excel")</td><td>@L.T("через Excel")</td><td><MudSwitch T="bool" @bind-Value="_p.Places.Connections" Color="Color.Primary" /></td></tr>
+                <tr><td>@L.T("Power Query (текстові рядки в M-коді запитів)")</td><td>@L.T("так")</td><td>@L.T("так")</td><td>—</td><td><MudSwitch T="bool" @bind-Value="_p.Places.PowerQuery" Color="Color.Primary" /></td></tr>
                 <tr><td>@L.T("Текст клітинок")</td><td colspan="3">@L.T("ще не реалізовано")</td><td><MudSwitch T="bool" Value="false" Disabled="true" /></td></tr>
             </tbody>
         </MudSimpleTable>

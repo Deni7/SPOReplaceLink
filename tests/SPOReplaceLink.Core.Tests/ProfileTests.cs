@@ -28,11 +28,11 @@ public class ProfileTests
     {
         var profile = Profile.Parse("""
             { "rules": [ { "old": "https://h/a", "new": "https://h/b" } ],
-              "places": { "powerQuery": true } }
+              "places": { "cellText": true } }
             """);
         var validation = profile.Validate();
         Assert.False(validation.IsValid);
-        Assert.Contains(validation.Issues, i => i.Message.Contains("powerQuery"));
+        Assert.Contains(validation.Issues, i => i.Message.Contains("cellText"));
     }
 
     [Fact]

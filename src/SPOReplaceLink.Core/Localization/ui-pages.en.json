@@ -175,6 +175,8 @@
   "Місця заміни": "Replacement locations",
   "Увімкнено": "Enabled",
   "Hyperlinks (гіперпосилання на клітинках і фігурах)": "Hyperlinks (on cells and shapes)",
+  "Підключення до даних (рядки підключення, SQL-команди, .odc, веб-запити)": "Data connections (connection strings, SQL commands, .odc, web queries)",
+  "Power Query (текстові рядки в M-коді запитів)": "Power Query (text literals in the M code of queries)",
   "так": "yes",
   "через Excel": "via Excel",
   "Link Sources (зовнішні книги, Edit Links)": "Link Sources (external workbooks, Edit Links)",

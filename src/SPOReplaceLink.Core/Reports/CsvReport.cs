@@ -23,7 +23,7 @@ public sealed class CsvReport : IDisposable
         _residuals = Open(Path.Combine(directory, "residuals.csv"));
 
         WriteRow(_files, "path", "format", "status", "replacements", "hyperlinks", "link_sources", "formulas",
-            "cached_values", "other_external", "residuals", "changed_parts", "error_class", "error");
+            "cached_values", "other_external", "connections", "power_query", "residuals", "changed_parts", "error_class", "error");
         WriteRow(_links, "file", "part", "kind", "action", "old_value", "new_value", "rule", "resolved_from");
         WriteRow(_residuals, "file", "part", "encoding", "match", "context");
     }
@@ -35,7 +35,8 @@ public sealed class CsvReport : IDisposable
             WriteRow(_files, r.Path, r.Format, r.StatusCode, Num(r.Replacements),
                 Num(r.ReplacementsOf(LinkKind.Hyperlink)), Num(r.ReplacementsOf(LinkKind.LinkSource)),
                 Num(r.ReplacementsOf(LinkKind.Formula)), Num(r.ReplacementsOf(LinkKind.CachedValue)),
-                Num(r.ReplacementsOf(LinkKind.OtherExternal)), Num(r.Residuals.Count),
+                Num(r.ReplacementsOf(LinkKind.OtherExternal)), Num(r.ReplacementsOf(LinkKind.Connection)),
+                Num(r.ReplacementsOf(LinkKind.PowerQuery)), Num(r.Residuals.Count),
                 string.Join(' ', r.ChangedParts), r.ErrorClass?.ToString().ToLowerInvariant(), r.Error);
 
             foreach (var l in r.Links)

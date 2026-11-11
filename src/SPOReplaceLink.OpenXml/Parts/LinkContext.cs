@@ -52,6 +52,8 @@ internal sealed class LinkContext(RuleSet rules, PlacesOptions places, string? d
         LinkKind.LinkSource => places.LinkSources,
         LinkKind.Formula or LinkKind.CachedValue => places.Formulas,
         LinkKind.WorkbookPath => true,
+        LinkKind.Connection => places.Connections,
+        LinkKind.PowerQuery => places.PowerQuery,
         _ => places.OtherExternal,
     };
 }

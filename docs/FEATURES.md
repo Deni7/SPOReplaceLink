@@ -73,9 +73,9 @@
 | OOX-3 | Альтернативний абсолютний URL зовнішньої книги | `xxl21:absoluteUrl` в `externalLinkN.xml` | MVP |
 | OOX-4 | Текстові URL у формулах (`HYPERLINK`, `INDIRECT`) | `<f>` у `sheetN.xml` | MVP |
 | OOX-5 | Джерела pivot-кешів | `xl/pivotCache/pivotCacheDefinitionN.xml` і `.rels` | P2 |
-| OOX-6 | Підключення до даних | `xl/connections.xml`, query tables | P2 |
+| OOX-6 | Підключення до даних (реалізовано) | `xl/connections.xml`, query tables | P2 |
 | OOX-7 | Defined names з текстовими URL | `xl/workbook.xml` | P2 |
-| OOX-8 | Power Query (M-код) | `customXml/itemN.xml` → DataMashup (base64 → вкладений zip) | P3 |
+| OOX-8 | Power Query (M-код) (реалізовано) | `customXml/itemN.xml` → DataMashup (base64 → вкладений zip) | P3 |
 | OOX-9 | Текст комірок, що є URL | `xl/sharedStrings.xml` | P3 |
 
 Вимоги до самої обробки:

@@ -530,9 +530,9 @@ Eliminate the cause and click **Resume run**. If it is a block, do not resume ri
 The `…:residual` status means the replacements were made, but old prefixes remain in the file. Causes:
 - there is no rule for this address;
 - the replacement location is disabled in the profile;
-- the location is not supported (pivot caches, data connections, Power Query, cell text, VBA).
+- the location is not supported (pivot caches, cell text, VBA, descriptions and parameters of connections, comments in Power Query M code).
 
-1. **Reports → Residuals:** file, file part (`xl/pivotCache/…`, `xl/connections.xml`, `xl/vbaProject.bin`, etc.), the match found, and context.
+1. **Reports → Residuals:** file, file part (`xl/pivotCache/…`, `xl/connections.xml`, `xl/vbaProject.bin`, etc.; for Power Query — `customXml/item1.xml!Formulas/Section1.m`), the match found, and context.
 2. If a rule is missing — add it to the template.
 3. **Retry…** with the statuses `done:residual`, `unchanged:residual` or `planned:residual` and the **Use current profile version** checkbox — the retry will use the new rules. CLI: `spo-replace-link retry <run> --status done:residual unchanged:residual --current-profile`.
 4. Residuals in unsupported locations remain in the report: they are fixed manually or accepted as permissible.
@@ -744,7 +744,9 @@ The table shows which formats support each location. An old address in a locatio
 | Link Sources (`places.linkSources`) | Links to other workbooks (Data → Edit Links), including the alternate paths Excel stores in the file. | The main location for formulas that pull data from other workbooks. Cached values are not changed; the new source is read when the user refreshes the links. | on |
 | Formulas (`places.formulas`) | Addresses in formula text (`HYPERLINK("…")`, `INDIRECT("…")`) and the cached results of these formulas. | Turn off if formulas are left alone. | on |
 | Other external links (`places.otherExternal`) | Linked OLE objects, linked images. | — | on |
-| Pivot caches, Data connections, Power Query, Cell text (`places.pivotCaches`, `connections`, `powerQuery`, `cellText`) | Not implemented yet. | Visible but disabled. Enabling them in JSON is a profile error. Old addresses in these locations appear in the residuals report. | off |
+| Data connections (`places.connections`) | `xl/connections.xml`: connection strings (`Data Source`, `DBQ`, `DefaultDir`… — values that are addresses), SQL commands (paths in `` `…` ``, `[…]`, quotes), `.odc` and text source files, web query URLs. xlsb and xls — through Excel. | The connection reads the new source on the next data refresh. Names, descriptions and parameters of connections are not changed — old addresses there go to residuals. A UNC → https rule turns the path into a URL; whether the driver (ODBC, ACE) can read such a URL depends on the driver — check it in the pilot. | on |
+| Power Query (`places.powerQuery`) | Text literals in the M code of queries (`Web.Contents("…")`, `SharePoint.Files("…")`, `File.Contents("…")`, filters on `[Folder Path]`). Comments and step names `#"…"` are not changed. xls has no Power Query. | After the formulas change, Excel resets the permissions saved for the queries (privacy levels) to the defaults — as it does for anyone who opens the file under another account; it may ask for them again on refresh. An address built from parts (`"https://…/sites/old" & "/Shared Documents"`) is replaced only if a rule matches a single part. | on |
+| Pivot caches, Cell text (`places.pivotCaches`, `cellText`) | Not implemented yet. | Visible but disabled. Enabling them in JSON is a profile error. Old addresses in these locations appear in the residuals report. | off |
 
 You cannot turn off all locations (profile error).
 
@@ -1058,7 +1060,8 @@ In the data folder (`--data`):
 
 ## 3.13. Limitations
 
-- **Not fixed** (only reported in residuals): pivot caches, data connections, Power Query, cell text, paths in VBA code, links like `AllItems.aspx?id=…` and `/:x:/r/…`.
+- **Not fixed** (only reported in residuals): pivot caches, cell text, descriptions and parameters of connections, comments in M code, paths in VBA code, links like `AllItems.aspx?id=…` and `/:x:/r/…`.
+- **The Data Model (Power Pivot)** keeps its own copy of connection strings in `xl/model/item.data`; it is not changed and not checked for residuals. Power Query queries loaded to the model take their sources from the M code, so for them that is enough; for other model connections check the refresh in the pilot.
 - **The Modified and Modified By fields change:** writing a file creates a new version on behalf of the app.
 - **No bulk rollback** — only manually via version history ([S12](#s12-restoring-a-previous-version-of-a-file)).
 - **Prefix rules only** (no regular expressions or variables).

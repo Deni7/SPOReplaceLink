@@ -161,13 +161,21 @@ internal static partial class PartRewriters
         return edits.Count == 0 ? null : edits.Apply(escaped);
     }
 
-    private static string? RewriteLiteral(string literal, LinkContext ctx)
+    /// <summary>
+    /// A text value that is a link as a whole, or holds links inside a longer text ("see https://…/a.xlsx").
+    /// Returns the new text or null.
+    /// </summary>
+    internal static string? RewriteLiteral(string literal, LinkContext ctx, LinkKind kind = LinkKind.Formula, bool serverRelative = true)
     {
         var form = LinkClassifier.Classify(literal);
-        if (LinkClassifier.IsAbsolute(form) || form == LinkForm.ServerRelative)
-            return ctx.Rewrite(literal, LinkKind.Formula);
+        if (LinkClassifier.IsAbsolute(form) || (serverRelative && form == LinkForm.ServerRelative))
+            return ctx.Rewrite(literal, kind);
+        return RewriteEmbedded(literal, ctx, kind);
+    }
 
-        // A link inside a longer text: "see https://…/a.xlsx". It ends at whitespace.
+    /// <summary>Links that start inside a text (http(s)://, file:, \server) and end at whitespace.</summary>
+    internal static string? RewriteEmbedded(string literal, LinkContext ctx, LinkKind kind)
+    {
         StringBuilder? sb = null;
         int copied = 0;
         foreach (Match start in EmbeddedLinkStart().Matches(literal))
@@ -177,7 +185,7 @@ internal static partial class PartRewriters
             int end = start.Index;
             while (end < literal.Length && !char.IsWhiteSpace(literal[end]))
                 end++;
-            string? replaced = ctx.Rewrite(literal[start.Index..end], LinkKind.Formula);
+            string? replaced = ctx.Rewrite(literal[start.Index..end], kind);
             if (replaced is null)
                 continue;
             sb ??= new StringBuilder(literal.Length + 32);

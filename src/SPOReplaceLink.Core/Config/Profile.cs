@@ -165,11 +165,11 @@ public sealed class PlacesOptions
     /// <summary>OOX-5 (P2).</summary>
     public bool PivotCaches { get; set; }
 
-    /// <summary>OOX-6 (P2).</summary>
-    public bool Connections { get; set; }
+    /// <summary>OOX-6: xl/connections.xml — connection strings, SQL commands, source and .odc files, web queries.</summary>
+    public bool Connections { get; set; } = true;
 
-    /// <summary>OOX-8 (P3).</summary>
-    public bool PowerQuery { get; set; }
+    /// <summary>OOX-8: text literals in Power Query formulas (customXml → DataMashup → Formulas/*.m).</summary>
+    public bool PowerQuery { get; set; } = true;
 
     /// <summary>OOX-9 (P3).</summary>
     public bool CellText { get; set; }
@@ -178,15 +178,14 @@ public sealed class PlacesOptions
     {
         var notYet = new (bool On, string Name)[]
         {
-            (PivotCaches, "pivotCaches"), (Connections, "connections"),
-            (PowerQuery, "powerQuery"), (CellText, "cellText"),
+            (PivotCaches, "pivotCaches"), (CellText, "cellText"),
         };
         foreach (var (on, name) in notYet.Where(x => x.On))
         {
             yield return new(IssueSeverity.Error,
                 L.F("places.{0}: заміна в цьому місці ще не реалізована. Вимкніть її; залишки там потраплять у звіт.", name));
         }
-        if (!Hyperlinks && !LinkSources && !Formulas && !OtherExternal)
+        if (!Hyperlinks && !LinkSources && !Formulas && !OtherExternal && !Connections && !PowerQuery)
             yield return new(IssueSeverity.Error, L.T("places: вимкнено всі місця заміни."));
     }
 }

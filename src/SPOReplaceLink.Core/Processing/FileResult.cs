@@ -9,6 +9,10 @@ public enum LinkKind
     /// <summary>Cached text result of a formula (&lt;v&gt;) that is itself a link.</summary>
     CachedValue,
     OtherExternal,
+    /// <summary>OOX-6: data connections — connection strings, commands, source and .odc files, web query URLs.</summary>
+    Connection,
+    /// <summary>OOX-8: text literals in Power Query (M) formulas.</summary>
+    PowerQuery,
     /// <summary>
     /// Folder the workbook was last saved in (x15ac:absPath). Metadata, not a link: updated only when the file
     /// is written anyway, not counted as a replacement and not reported as a residual.
