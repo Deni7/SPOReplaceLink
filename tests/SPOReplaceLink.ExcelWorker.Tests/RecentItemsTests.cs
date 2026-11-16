@@ -34,11 +34,13 @@ public sealed class RecentItemsTests : IDisposable
         string similar = Link("temp2.xlsx", _root + "2\\book.xls"); // a sibling folder whose name starts the same
 
         Assert.Equal(Path.Combine(_root, "run-2", "x66831-092a63", "book-out.xls"), RecentItems.Target(oursOut), ignoreCase: true);
-        Assert.Equal(2, new RecentItems(_root, _recent).Sweep());
-        Assert.False(File.Exists(ours));
-        Assert.False(File.Exists(oursOut));
+        int deleted = new RecentItems(_root, _recent).Sweep();
+        // Which shortcut is wrong says more than the count: checked first.
+        Assert.False(File.Exists(ours), File.Exists(ours) ? $"{ours} -> {RecentItems.Target(ours)}" : null);
+        Assert.False(File.Exists(oursOut), File.Exists(oursOut) ? $"{oursOut} -> {RecentItems.Target(oursOut)}" : null);
         Assert.True(File.Exists(mine));
         Assert.True(File.Exists(similar));
+        Assert.Equal(2, deleted);
     }
 
     [Fact]

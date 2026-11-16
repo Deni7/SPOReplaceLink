@@ -16,6 +16,7 @@ internal sealed class RecentItems
     private readonly string[] _roots;
     private readonly object _sync = new();
     private DateTime _since = DateTime.MinValue;
+    private HashSet<string> _failed = new(StringComparer.OrdinalIgnoreCase);
 
     /// <param name="root">The temporary folder whose files must not stay in Recent Items.</param>
     /// <param name="recentFolder">The Recent folder; the user's one by default (tests pass their own).</param>
@@ -43,20 +44,22 @@ internal sealed class RecentItems
             var since = _since == DateTime.MinValue ? DateTime.MinValue : _since - TimeSpan.FromMinutes(1);
             _since = DateTime.UtcNow;
             int deleted = 0;
+            var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var file in new DirectoryInfo(_recent).EnumerateFiles("*.lnk"))
             {
-                try
+                if (file.LastWriteTimeUtc < since && !_failed.Contains(file.FullName))
+                    continue;
+                switch (TryDelete(file))
                 {
-                    if (file.LastWriteTimeUtc < since || !IsUnderRoot(Target(file.FullName)))
-                        continue;
-                    file.Delete();
-                    deleted++;
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or COMException)
-                {
-                    // In use or not a readable shortcut: left alone.
+                    case true:
+                        deleted++;
+                        break;
+                    case null:
+                        failed.Add(file.FullName); // looked at again by the next sweep, however old it is
+                        break;
                 }
             }
+            _failed = failed;
             return deleted;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -66,6 +69,35 @@ internal sealed class RecentItems
         finally
         {
             Monitor.Exit(_sync);
+        }
+    }
+
+    /// <summary>
+    /// Deletes the shortcut if it points under the root: true deleted, false not ours, null failed. A fresh shortcut
+    /// can be held for a moment by Explorer, the indexer or an antivirus scan, so a failure is tried again.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private bool? TryDelete(FileInfo file)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                if (!IsUnderRoot(Target(file.FullName)))
+                    return false;
+                file.Delete();
+                return true;
+            }
+            catch (FileNotFoundException)
+            {
+                return false; // removed by someone else meanwhile
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or COMException)
+            {
+                if (attempt == 3)
+                    return null; // in use or not a readable shortcut: left alone for now
+                Thread.Sleep(50);
+            }
         }
     }
 
