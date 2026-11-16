@@ -17,22 +17,82 @@ public sealed class ResidualScanner
 
     public ResidualScanner(RuleSet rules)
     {
-        var alternatives = new List<string>();
+        // Alternatives share long prefixes (host, /sites/…): they are merged into a trie so that each text
+        // position walks one branch instead of trying every rule — with ~100 rules a flat alternation
+        // takes tens of seconds on a large sheet.
+        var trie = new Node();
         foreach (var rule in rules.Rules)
         {
-            alternatives.Add(Pattern(rule.MatchKey));
+            trie.Add(Tokens(rule.MatchKey));
             // http rules: the same path written without host (/Document/…), but not inside another path.
             if (LinkClassifier.Classify(rule.MatchKey) == LinkForm.Http)
             {
                 string path = PathOf(rule.MatchKey);
                 if (path.Length > 1)
-                    alternatives.Add(@"(?<![\p{L}\p{N}_.~%/:-])" + Pattern(path));
+                    trie.Add([@"(?<![\p{L}\p{N}_.~%/:-])", .. Tokens(path)]);
             }
         }
         string boundary = @"(?![\p{L}\p{N}_.~-]|%(?!2[Ff]|5[Cc]))";
-        _regex = new Regex("(?:" + string.Join("|", alternatives.Distinct()) + ")" + boundary,
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled,
-            TimeSpan.FromSeconds(30));
+        // No nested quantifiers: matching is linear in the text, so a timeout would only fail big files.
+        // Not Compiled: for a pattern this size the generated method is poorly optimized by the JIT and runs
+        // 40-70x slower than the interpreter (10-20 s vs 0.3 s on a 30 MB sheet).
+        _regex = new Regex("(?:" + trie.ToPattern() + ")" + boundary,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+            Regex.InfiniteMatchTimeout);
+    }
+
+    /// <summary>Trie of regex tokens; longer continuations come before the end so the longest prefix wins.</summary>
+    private sealed class Node
+    {
+        private readonly List<(string Token, Node Next)> _children = [];
+        private bool _end;
+
+        public void Add(IEnumerable<string> tokens)
+        {
+            var node = this;
+            foreach (string token in tokens)
+            {
+                var next = node._children.FirstOrDefault(c => c.Token == token).Next;
+                if (next is null)
+                {
+                    next = new Node();
+                    node._children.Add((token, next));
+                }
+                node = next;
+            }
+            node._end = true;
+        }
+
+        public string ToPattern()
+        {
+            var sb = new StringBuilder();
+            Append(sb);
+            return sb.ToString();
+        }
+
+        private void Append(StringBuilder sb)
+        {
+            var node = this;
+            // A chain of single children is written as a plain sequence (iteratively: keys can be long).
+            while (node._children.Count == 1 && !node._end)
+            {
+                sb.Append(node._children[0].Token);
+                node = node._children[0].Next;
+            }
+            if (node._children.Count == 0)
+                return;
+            sb.Append("(?:");
+            for (int i = 0; i < node._children.Count; i++)
+            {
+                if (i > 0)
+                    sb.Append('|');
+                sb.Append(node._children[i].Token);
+                node._children[i].Next.Append(sb);
+            }
+            if (node._end)
+                sb.Append('|');
+            sb.Append(')');
+        }
     }
 
     public IEnumerable<Residual> ScanText(string part, string text) => Scan(part, text, "utf-8");
@@ -67,16 +127,15 @@ public sealed class ResidualScanner
         }
     }
 
-    /// <summary>Regex for a normalized prefix: each char matches its raw, upper-case or percent-encoded spelling.</summary>
-    private static string Pattern(string normalized)
+    /// <summary>Regex tokens for a normalized prefix: each char matches its raw, upper-case or percent-encoded spelling.</summary>
+    private static IEnumerable<string> Tokens(string normalized)
     {
-        var sb = new StringBuilder();
         foreach (Rune rune in normalized.EnumerateRunes())
         {
             string ch = rune.ToString();
             if (ch == "/")
             {
-                sb.Append(@"(?:/|\\|%2F|%5C)");
+                yield return @"(?:/|\\|%2F|%5C)";
                 continue;
             }
             string escaped = Regex.Escape(ch);
@@ -89,9 +148,8 @@ public sealed class ResidualScanner
                 options.Add(Regex.Escape(encoded));
             if (ch == " ")
                 options.Add(@"\+");
-            sb.Append(options.Count == 1 ? escaped : "(?:" + string.Join("|", options) + ")");
+            yield return options.Count == 1 ? escaped : "(?:" + string.Join("|", options) + ")";
         }
-        return sb.ToString();
     }
 
     private static string PathOf(string httpUrl)

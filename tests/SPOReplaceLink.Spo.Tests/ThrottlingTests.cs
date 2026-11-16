@@ -45,12 +45,13 @@ public class ThrottlingTests
         await budget.WaitAsync(100, CancellationToken.None);
         time.Advance(TimeSpan.FromSeconds(30));
         await budget.WaitAsync(100, CancellationToken.None);
-        // The bucket is refilled, yet 200 of 1000 RU went out in the last minute.
-        Assert.Equal(0, budget.Utilization, 2);
+        // The bucket refilled after the first 100, so it shows only the second one, yet 200 of 1000 RU went out in the last minute.
+        Assert.Equal(0.1, budget.Utilization, 2);
         Assert.Equal(0.2, budget.WindowLoad, 2);
 
+        // 10:01:15 — both spends are in the 10:00 minute, 3/4 of which is still inside the window: 200 × 0.75.
         time.Advance(TimeSpan.FromSeconds(45));
-        Assert.Equal(0.125, budget.WindowLoad, 3);
+        Assert.Equal(0.15, budget.WindowLoad, 3);
         time.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal(0, budget.WindowLoad, 3);
     }
