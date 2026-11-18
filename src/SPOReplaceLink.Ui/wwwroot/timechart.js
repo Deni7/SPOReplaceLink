@@ -86,7 +86,8 @@ function apply(chart) {
 }
 
 export function create(el, spec, data) {
-    if (!window.uPlot)
+    // The page may be left while the module loads: the element is gone (null) or no longer in the document.
+    if (!window.uPlot || !el || !el.isConnected)
         return null;
     if (!groups.has(spec.group))
         groups.set(spec.group, { charts: new Set(), mode: { kind: 'all' } });
