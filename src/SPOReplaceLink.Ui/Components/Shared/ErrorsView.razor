@@ -110,8 +110,16 @@
             _open = null;
             return;
         }
-        _open = g;
+        // During a run the groups go stale: a deferred file goes back to the queue on every wave. An empty list of ids
+        // must not reach QueryFiles, which takes no ids as "no filter" and would list unrelated files.
         var ids = Runs.Store.FileIdsOfGroup(RunId, g.Status, g.Error).Take(50).ToList();
+        if (ids.Count == 0)
+        {
+            Load();
+            Snackbar.Add(L.T("Файли цієї групи вже змінили статус; групи оновлено."), Severity.Info);
+            return;
+        }
+        _open = g;
         _openFiles = Runs.Store.QueryFiles(RunId, new FileFilter { FileIds = ids }, 0, 50).ToList();
     }
 

@@ -91,6 +91,7 @@
   "Повідомлення": "Message",
   "Що робити": "What to do",
   "Показати файли групи": "Show the files of the group",
+  "Файли цієї групи вже змінили статус; групи оновлено.": "The files of this group have changed their status since; the groups are refreshed.",
   "Повторити групу": "Retry the group",
   "Ігнорувати групу": "Ignore the group",
   "спроб {0}": "attempts {0}",
