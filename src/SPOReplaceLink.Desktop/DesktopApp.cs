@@ -4,6 +4,7 @@ using System.Text;
 using System.Windows;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using MudBlazor.Services;
 using SPOReplaceLink.Core.Localization;
 using SPOReplaceLink.Engine;
@@ -54,6 +55,10 @@ public static class DesktopApp
         services.AddBlazorWebViewDeveloperTools();
 #endif
         services.AddMudServices();
+        // What the pages and their libraries log goes to the host's log, logs\host-*.jsonl (exceptions of the pages:
+        // MainWindow.LogPageErrorsAsync).
+        services.AddLogging();
+        services.AddSingleton(_ => host.Services.GetRequiredService<ILoggerFactory>());
         // The pages use the same engine objects as the local API: one state, one active run.
         services.AddSingleton(_ => host.Services.GetRequiredService<StateStore>());
         services.AddSingleton(_ => host.Services.GetRequiredService<RunService>());

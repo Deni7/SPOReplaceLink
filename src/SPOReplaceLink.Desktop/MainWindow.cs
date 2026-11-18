@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Components.WebView.Wpf;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using SPOReplaceLink.Core.Localization;
 using SPOReplaceLink.Engine;
@@ -94,10 +95,52 @@ internal sealed class MainWindow : Window
         SystemEvents.DisplaySettingsChanging += HoldWebViewSize;
         SystemEvents.DisplaySettingsChanged += HoldWebViewSize;
 
+        var pageLog = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SPOReplaceLink.Desktop.Page");
+        _webView.BlazorWebViewInitialized += async (_, _) => await LogPageErrorsAsync(pageLog);
         if (selftest is not null)
             _webView.BlazorWebViewInitialized += async (_, _) => await SelfTestAsync();
         else if (apiWarning is not null)
             Loaded += (_, _) => MessageBox.Show(this, apiWarning, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    /// <summary>
+    /// The WebView renderer does not log an exception of a page: it sends it to the page, which shows the red
+    /// "details are in the log" bar and writes it to the console. Errors of the console and uncaught script errors
+    /// therefore go to the host's log (logs\host-*.jsonl).
+    /// </summary>
+    private async Task LogPageErrorsAsync(ILogger log)
+    {
+        try
+        {
+            var core = _webView.WebView.CoreWebView2;
+            core.GetDevToolsProtocolEventReceiver("Runtime.consoleAPICalled").DevToolsProtocolEventReceived += (_, e) =>
+            {
+                using var doc = JsonDocument.Parse(e.ParameterObjectAsJson);
+                var p = doc.RootElement;
+                if (p.TryGetProperty("type", out var type) && type.GetString() is "error" or "assert")
+                {
+                    var parts = p.TryGetProperty("args", out var args)
+                        ? args.EnumerateArray().Select(a => a.TryGetProperty("value", out var v) ? v.ToString()
+                            : a.TryGetProperty("description", out var d) ? d.GetString() : null)
+                        : [];
+                    log.LogError("Page error: {Message}", string.Join(" ", parts.Where(s => !string.IsNullOrEmpty(s))));
+                }
+            };
+            core.GetDevToolsProtocolEventReceiver("Runtime.exceptionThrown").DevToolsProtocolEventReceived += (_, e) =>
+            {
+                using var doc = JsonDocument.Parse(e.ParameterObjectAsJson);
+                var d = doc.RootElement.GetProperty("exceptionDetails");
+                string text = d.TryGetProperty("exception", out var ex) && ex.TryGetProperty("description", out var desc)
+                    ? desc.GetString() ?? "" : d.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                string where = d.TryGetProperty("url", out var url) ? $" ({url.GetString()}:{(d.TryGetProperty("lineNumber", out var ln) ? ln.GetInt32() + 1 : 0)})" : "";
+                log.LogError("Page script error: {Message}{Where}", text, where);
+            };
+            await core.CallDevToolsProtocolMethodAsync("Runtime.enable", "{}");
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Page errors are not logged");
+        }
     }
 
     private void HoldWebViewSize(object? sender, EventArgs e) => Dispatcher.Invoke(() =>
