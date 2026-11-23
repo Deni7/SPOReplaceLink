@@ -215,6 +215,7 @@
   "Самоперевірка не пройдена: ": "Self-check failed: ",
   "Пошкоджений архів або частина: ": "Corrupted archive or part: ",
   "Частина {0} зникла з архіву.": "Part {0} disappeared from the archive.",
+  "частина {0} завелика ({1} байт) для обробки цілою.": "part {0} is too large ({1} bytes) to be processed whole.",
   "склад частин архіву змінився.": "the set of archive parts changed.",
   "частина {0} змінилася, хоча замін у ній немає.": "part {0} changed although it has no replacements.",
   "вміст {0} не збігається із записаним.": "the content of {0} does not match what was written.",

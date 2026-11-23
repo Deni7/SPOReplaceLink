@@ -13,7 +13,11 @@ namespace SPOReplaceLink.OpenXml;
 public sealed class ResidualScanner
 {
     private const int ContextChars = 40;
+    /// <summary>Window of a binary part scanned at once; a part above it is read piece by piece.</summary>
+    internal const int DefaultChunkBytes = 32 * 1024 * 1024;
     private readonly Regex _regex;
+    /// <summary>Longest text a match can take: each char of a key spelled as up to four percent-encoded bytes.</summary>
+    private readonly int _maxMatch;
 
     public ResidualScanner(RuleSet rules)
     {
@@ -21,8 +25,10 @@ public sealed class ResidualScanner
         // position walks one branch instead of trying every rule — with ~100 rules a flat alternation
         // takes tens of seconds on a large sheet.
         var trie = new Node();
+        int longest = 0;
         foreach (var rule in rules.Rules)
         {
+            longest = Math.Max(longest, rule.MatchKey.Length);
             trie.Add(Tokens(rule.MatchKey));
             // http rules: the same path written without host (/Document/…), but not inside another path.
             if (LinkClassifier.Classify(rule.MatchKey) == LinkForm.Http)
@@ -39,6 +45,7 @@ public sealed class ResidualScanner
         _regex = new Regex("(?:" + trie.ToPattern() + ")" + boundary,
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
             Regex.InfiniteMatchTimeout);
+        _maxMatch = 12 * longest + 16;
     }
 
     /// <summary>Trie of regex tokens; longer continuations come before the end so the longest prefix wins.</summary>
@@ -98,29 +105,69 @@ public sealed class ResidualScanner
     public IEnumerable<Residual> ScanText(string part, string text) => Scan(part, text, "utf-8");
 
     /// <summary>Binary part: looks for UTF-16LE strings (both byte alignments) and 8-bit strings.</summary>
-    public IEnumerable<Residual> ScanBinary(string part, byte[] bytes)
+    public IEnumerable<Residual> ScanBinary(string part, byte[] bytes) => ScanBinary(part, new MemoryStream(bytes, writable: false));
+
+    /// <summary>
+    /// The same for a part read from a stream: windows of <paramref name="chunkBytes"/> overlapped on both sides by more
+    /// than a match and its context, so a part of any size is scanned without holding it whole; a match counts in the
+    /// window where it starts.
+    /// </summary>
+    public IReadOnlyList<Residual> ScanBinary(string part, Stream stream, int chunkBytes = DefaultChunkBytes)
     {
         var found = new HashSet<string>(StringComparer.Ordinal);
         var results = new List<Residual>();
-        void Add(IEnumerable<Residual> items)
+        // Even sizes keep UTF-16 alignment of every window the same as in the whole part.
+        int overlap = 2 * (_maxMatch + 2 * ContextChars + 8);
+        chunkBytes = Math.Max(2, chunkBytes & ~1);
+        var window = new byte[overlap + chunkBytes + overlap];
+        long windowStart = 0;
+        int filled = 0;
+        bool eof = false;
+        for (long own = 0; ; own += chunkBytes)
         {
-            foreach (var r in items)
+            long keepFrom = Math.Max(0, own - overlap);
+            int drop = (int)(keepFrom - windowStart);
+            if (drop > 0)
             {
-                if (found.Add(r.Encoding + "|" + r.Context))
-                    results.Add(r);
+                Buffer.BlockCopy(window, drop, window, 0, filled - drop);
+                filled -= drop;
+                windowStart = keepFrom;
             }
+            int want = (int)(own + chunkBytes + overlap - windowStart);
+            while (filled < want && !eof)
+            {
+                int n = stream.Read(window, filled, want - filled);
+                if (n == 0)
+                    eof = true;
+                else
+                    filled += n;
+            }
+
+            long ownEnd = own + chunkBytes;
+            void Add(string text, string encoding, int origin, int step)
+            {
+                foreach (var r in Scan(part, text, encoding, i => windowStart + origin + (long)step * i is var at && at >= own && at < ownEnd))
+                {
+                    if (found.Add(r.Encoding + "|" + r.Context))
+                        results.Add(r);
+                }
+            }
+            Add(Encoding.Unicode.GetString(window, 0, filled), "utf-16le", 0, 2);
+            if (filled > 1)
+                Add(Encoding.Unicode.GetString(window, 1, filled - 1), "utf-16le", 1, 2);
+            Add(Encoding.Latin1.GetString(window, 0, filled), "8-bit", 0, 1);
+
+            if (eof && ownEnd >= windowStart + filled)
+                return results;
         }
-        Add(Scan(part, Encoding.Unicode.GetString(bytes), "utf-16le"));
-        if (bytes.Length > 1)
-            Add(Scan(part, Encoding.Unicode.GetString(bytes, 1, bytes.Length - 1), "utf-16le"));
-        Add(Scan(part, Encoding.Latin1.GetString(bytes), "8-bit"));
-        return results;
     }
 
-    private IEnumerable<Residual> Scan(string part, string text, string encoding)
+    private IEnumerable<Residual> Scan(string part, string text, string encoding, Func<int, bool>? counts = null)
     {
         foreach (Match m in _regex.Matches(text))
         {
+            if (counts is not null && !counts(m.Index))
+                continue;
             int from = Math.Max(0, m.Index - ContextChars);
             int to = Math.Min(text.Length, m.Index + m.Length + ContextChars);
             yield return new Residual(part, encoding, Clean(m.Value), Clean(text[from..to]));

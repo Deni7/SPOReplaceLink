@@ -21,12 +21,27 @@ public sealed partial class WorkbookProcessor
     private readonly RuleSet _rules;
     private readonly PlacesOptions _places;
     private readonly ResidualScanner _scanner;
+    private readonly long _largePart;
+    private readonly int _segmentChars;
+
+    /// <summary>Parts bigger than this (uncompressed) are read piece by piece instead of as one string.</summary>
+    internal const long DefaultLargePart = 64L * 1024 * 1024;
+
+    /// <summary>Size of one piece of a large XML part, in chars.</summary>
+    internal const int DefaultSegmentChars = 8 * 1024 * 1024;
 
     public WorkbookProcessor(RuleSet rules, PlacesOptions places)
+        : this(rules, places, DefaultLargePart, DefaultSegmentChars)
+    {
+    }
+
+    internal WorkbookProcessor(RuleSet rules, PlacesOptions places, long largePart, int segmentChars)
     {
         _rules = rules;
         _places = places;
         _scanner = new ResidualScanner(rules);
+        _largePart = largePart;
+        _segmentChars = segmentChars;
     }
 
     /// <param name="inputPath">The file to process; never modified.</param>
@@ -38,6 +53,7 @@ public sealed partial class WorkbookProcessor
     {
         string ext = Path.GetExtension(inputPath).ToLowerInvariant();
         var result = new FileResult { Path = displayPath, Format = ext.TrimStart('.') };
+        Plan? plan = null;
         try
         {
             switch (PackageSniffer.Detect(inputPath))
@@ -63,20 +79,22 @@ public sealed partial class WorkbookProcessor
                     return Fail(result, ErrorClass.File, L.T("Файл не є zip-архівом OOXML (пошкоджений або інший формат)."));
             }
 
-            var plan = Analyze(inputPath, documentFolder, ext == ".xlsb", local);
+            plan = new Plan(outputPath);
+            Analyze(plan, inputPath, documentFolder, ext == ".xlsb", local);
             result.Links.AddRange(plan.Links);
             result.Residuals.AddRange(plan.Residuals);
             result.NeedsExcel = plan.NeedsExcel;
-            if (plan.Changed.Count == 0)
+            if (!plan.HasChanges)
             {
                 result.Status = FileStatus.Unchanged;
                 return result;
             }
 
             result.ChangedParts.AddRange(plan.Changed.Keys);
+            result.ChangedParts.AddRange(plan.Spilled.Keys);
             try
             {
-                Write(inputPath, outputPath, plan.Changed);
+                Write(inputPath, outputPath, plan);
                 Verify(inputPath, outputPath, plan, documentFolder, local);
             }
             catch
@@ -104,14 +122,36 @@ public sealed partial class WorkbookProcessor
         {
             return Fail(result, ErrorClass.Internal, ex.GetType().Name + ": " + ex.Message);
         }
+        finally
+        {
+            plan?.DeleteTemp();
+        }
     }
 
-    private sealed class Plan
+    private sealed class Plan(string outputPath)
     {
         public Dictionary<string, byte[]> Changed { get; } = new(StringComparer.Ordinal);
+        /// <summary>Changed large parts, written to temporary files next to the output instead of held in memory.</summary>
+        public Dictionary<string, string> Spilled { get; } = new(StringComparer.Ordinal);
         public List<LinkRecord> Links { get; } = [];
         public List<Residual> Residuals { get; } = [];
         public bool NeedsExcel { get; set; }
+        public bool HasChanges => Changed.Count > 0 || Spilled.Count > 0;
+        private readonly List<string> _temp = [];
+
+        public string NewTemp()
+        {
+            string path = outputPath + "." + _temp.Count + ".part";
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+            _temp.Add(path);
+            return path;
+        }
+
+        public void DeleteTemp()
+        {
+            foreach (string path in _temp)
+                TryDelete(path);
+        }
     }
 
     private enum PartKind { Rels, ExternalLink, Sheet, Workbook, Connections, CustomXml, OtherXml, Binary, Skip }
@@ -148,9 +188,8 @@ public sealed partial class WorkbookProcessor
         };
     }
 
-    private Plan Analyze(string path, string? documentFolder, bool isXlsb, LocalCopy? local)
+    private void Analyze(Plan plan, string path, string? documentFolder, bool isXlsb, LocalCopy? local)
     {
-        var plan = new Plan();
         (string Name, PartText Text)? workbook = null;
         using var zip = ZipFile.OpenRead(path);
         foreach (var entry in zip.Entries)
@@ -159,6 +198,12 @@ public sealed partial class WorkbookProcessor
             var kind = KindOf(name);
             if (kind == PartKind.Skip || name.EndsWith('/'))
                 continue;
+
+            if (kind is PartKind.Sheet or PartKind.OtherXml or PartKind.Binary && !IsWorkbookBin(name) && entry.Length > _largePart)
+            {
+                AnalyzeLarge(plan, entry, kind, documentFolder, isXlsb, local);
+                continue;
+            }
 
             byte[] bytes = ReadAll(entry);
             switch (kind)
@@ -204,7 +249,7 @@ public sealed partial class WorkbookProcessor
                     break;
                 case PartKind.Binary:
                 {
-                    if (isXlsb && name.Equals("xl/workbook.bin", StringComparison.OrdinalIgnoreCase))
+                    if (isXlsb && IsWorkbookBin(name))
                         bytes = XlsbRecords.MaskRecords(bytes, XlsbRecords.AbsPath15);
                     var found = _scanner.ScanBinary(name, bytes).ToList();
                     plan.Residuals.AddRange(found);
@@ -217,7 +262,7 @@ public sealed partial class WorkbookProcessor
         }
 
         // The saved-at folder is refreshed only together with real changes: on its own it is not worth a new version.
-        if (plan.Changed.Count > 0 && workbook is { } wb)
+        if (plan.HasChanges && workbook is { } wb)
         {
             var ctx = new LinkContext(_rules, _places, documentFolder, wb.Name, local);
             string updated = PartRewriters.RewriteWorkbookPath(wb.Text.Text, ctx);
@@ -225,7 +270,87 @@ public sealed partial class WorkbookProcessor
             if (ctx.Changes > 0)
                 plan.Changed[wb.Name] = wb.Text.Encode(updated);
         }
-        return plan;
+    }
+
+    private static bool IsWorkbookBin(string name) => name.Equals("xl/workbook.bin", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A part too big for one string (a sheet or sharedStrings of millions of rows, an xlsb sheet): read piece by piece.
+    /// A changed sheet goes to a temporary file.
+    /// </summary>
+    private void AnalyzeLarge(Plan plan, ZipArchiveEntry entry, PartKind kind, string? documentFolder, bool isXlsb, LocalCopy? local)
+    {
+        string name = entry.FullName;
+        if (kind == PartKind.Binary)
+        {
+            IReadOnlyList<Residual> found;
+            using (var stream = entry.Open())
+                found = _scanner.ScanBinary(name, stream);
+            plan.Residuals.AddRange(found);
+            if (isXlsb && found.Count > 0 && IsXlsbRecordPart(name))
+                plan.NeedsExcel = true;
+            return;
+        }
+
+        if (kind == PartKind.OtherXml)
+        {
+            using var reader = new StreamReader(entry.Open(), Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
+            foreach (string segment in TextSegments.Read(reader, _segmentChars, TextSegments.AfterLastTag))
+                plan.Residuals.AddRange(_scanner.ScanText(name, segment));
+            return;
+        }
+
+        var ctx = new LinkContext(_rules, _places, documentFolder, name, local);
+        string temp = plan.NewTemp();
+        using (var reader = OpenText(entry, out var writeEncoding))
+        using (var writer = new StreamWriter(temp, append: false, writeEncoding, 1 << 16))
+        {
+            foreach (string segment in TextSegments.Read(reader, _segmentChars, TextSegments.AfterLastCellEnd))
+            {
+                string updated = PartRewriters.RewriteSheet(segment, ctx);
+                writer.Write(updated);
+                plan.Residuals.AddRange(_scanner.ScanText(name, updated));
+            }
+        }
+        plan.Links.AddRange(ctx.Links);
+        if (ctx.Changes > 0)
+            plan.Spilled[name] = temp;
+    }
+
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+
+    /// <summary>
+    /// Text of a large XML part read the way <see cref="PartText.Decode"/> reads it, and the encoding (with its byte
+    /// order mark, if the part had one) to write it back with.
+    /// </summary>
+    private static StreamReader OpenText(ZipArchiveEntry entry, out Encoding writeEncoding)
+    {
+        Span<byte> head = stackalloc byte[3];
+        int read;
+        using (var probe = entry.Open())
+            read = probe.ReadAtLeast(head, 3, throwOnEndOfStream: false);
+        Encoding readEncoding;
+        int bom;
+        if (read >= 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF)
+            (readEncoding, writeEncoding, bom) = (StrictUtf8, new UTF8Encoding(true, true), 3);
+        else if (read >= 2 && head[0] == 0xFF && head[1] == 0xFE)
+            (readEncoding, writeEncoding, bom) = (new UnicodeEncoding(false, false), new UnicodeEncoding(false, true), 2);
+        else if (read >= 2 && head[0] == 0xFE && head[1] == 0xFF)
+            (readEncoding, writeEncoding, bom) = (new UnicodeEncoding(true, false), new UnicodeEncoding(true, true), 2);
+        else
+            (readEncoding, writeEncoding, bom) = (StrictUtf8, StrictUtf8, 0);
+
+        var stream = entry.Open();
+        try
+        {
+            stream.ReadExactly(new byte[bom]);
+            return new StreamReader(stream, readEncoding, detectEncodingFromByteOrderMarks: false, 1 << 16);
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -249,7 +374,11 @@ public sealed partial class WorkbookProcessor
     }
 
     /// <summary>RES-1 for a file that is not a zip package (xls): old prefixes anywhere in its bytes.</summary>
-    public IReadOnlyList<Residual> ScanFile(string path, string part) => _scanner.ScanBinary(part, File.ReadAllBytes(path)).ToList();
+    public IReadOnlyList<Residual> ScanFile(string path, string part)
+    {
+        using var stream = File.OpenRead(path);
+        return _scanner.ScanBinary(part, stream);
+    }
 
     private static bool IsXlsbRecordPart(string name) =>
         name.StartsWith("xl/", StringComparison.OrdinalIgnoreCase)
@@ -268,20 +397,32 @@ public sealed partial class WorkbookProcessor
     };
 
     /// <summary>Copies the file and overwrites only the changed entries; the others keep their compressed bytes.</summary>
-    private static void Write(string input, string output, Dictionary<string, byte[]> changed)
+    private static void Write(string input, string output, Plan plan)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
         File.Copy(input, output, overwrite: true);
         File.SetAttributes(output, FileAttributes.Normal);
         using var fs = new FileStream(output, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         using var zip = new ZipArchive(fs, ZipArchiveMode.Update);
-        foreach (var (name, bytes) in changed)
+        foreach (var (name, bytes) in plan.Changed)
         {
-            var entry = zip.GetEntry(name) ?? throw new InvalidOperationException(L.F("Частина {0} зникла з архіву.", name));
-            using var stream = entry.Open();
-            stream.SetLength(0);
+            using var stream = OpenForUpdate(zip, name);
             stream.Write(bytes);
         }
+        foreach (var (name, temp) in plan.Spilled)
+        {
+            using var stream = OpenForUpdate(zip, name);
+            using var source = File.OpenRead(temp);
+            source.CopyTo(stream);
+        }
+    }
+
+    private static Stream OpenForUpdate(ZipArchive zip, string name)
+    {
+        var entry = zip.GetEntry(name) ?? throw new InvalidOperationException(L.F("Частина {0} зникла з архіву.", name));
+        var stream = entry.Open();
+        stream.SetLength(0);
+        return stream;
     }
 
     /// <summary>
@@ -300,7 +441,11 @@ public sealed partial class WorkbookProcessor
         for (int i = 0; i < a.Count; i++)
         {
             string name = b[i].FullName;
-            byte[] written = ReadAll(b[i]);
+            if (plan.Spilled.TryGetValue(name, out string? temp))
+            {
+                VerifyLarge(b[i], temp, plan, documentFolder, local);
+                continue;
+            }
             if (!plan.Changed.TryGetValue(name, out byte[]? expected))
             {
                 // .NET 8 rewrites an empty part as a stored entry, so Excel's two-byte deflate stream becomes zero bytes;
@@ -311,6 +456,7 @@ public sealed partial class WorkbookProcessor
                 continue;
             }
 
+            byte[] written = ReadAll(b[i]);
             if (!written.AsSpan().SequenceEqual(expected))
                 throw new VerificationException(L.F("вміст {0} не збігається із записаним.", name));
             var text = PartText.Decode(written);
@@ -326,14 +472,61 @@ public sealed partial class WorkbookProcessor
         }
     }
 
-    private static void EnsureWellFormed(string name, string xml)
+    /// <summary>OOX-14 for a large changed sheet, read piece by piece.</summary>
+    private void VerifyLarge(ZipArchiveEntry written, string temp, Plan plan, string? documentFolder, LocalCopy? local)
+    {
+        string name = written.FullName;
+        using (var actual = written.Open())
+        using (var expected = File.OpenRead(temp))
+        {
+            if (!SameContent(actual, expected))
+                throw new VerificationException(L.F("вміст {0} не збігається із записаним.", name));
+        }
+        using (var stream = written.Open())
+            EnsureWellFormed(name, XmlReader.Create(stream, XmlSettings));
+
+        var ctx = new LinkContext(_rules, _places, documentFolder, name, local);
+        using (var reader = OpenText(written, out _))
+        {
+            foreach (string segment in TextSegments.Read(reader, _segmentChars, TextSegments.AfterLastCellEnd))
+                PartRewriters.RewriteSheet(segment, ctx);
+        }
+        if (ctx.Changes != 0)
+            throw new VerificationException(L.F("повторна обробка {0} знайшла ще {1} замін.", name, ctx.Changes));
+        var expectedLinks = plan.Links.Where(l => l.Part == name).Select(l => l.NewValue ?? l.OldValue);
+        if (!ctx.Links.Select(l => l.OldValue).SequenceEqual(expectedLinks))
+            throw new VerificationException(L.F("посилання в {0} після запису не відповідають очікуваним.", name));
+    }
+
+    private static bool SameContent(Stream a, Stream b)
+    {
+        var x = new byte[1 << 16];
+        var y = new byte[1 << 16];
+        while (true)
+        {
+            int n = a.ReadAtLeast(x, x.Length, throwOnEndOfStream: false);
+            int m = b.ReadAtLeast(y, y.Length, throwOnEndOfStream: false);
+            if (n != m || !x.AsSpan(0, n).SequenceEqual(y.AsSpan(0, m)))
+                return false;
+            if (n < x.Length)
+                return true;
+        }
+    }
+
+    private static readonly XmlReaderSettings XmlSettings = new() { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
+
+    private static void EnsureWellFormed(string name, string xml) =>
+        EnsureWellFormed(name, XmlReader.Create(new StringReader(xml), XmlSettings));
+
+    private static void EnsureWellFormed(string name, XmlReader reader)
     {
         try
         {
-            var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
-            using var reader = XmlReader.Create(new StringReader(xml), settings);
-            while (reader.Read())
+            using (reader)
             {
+                while (reader.Read())
+                {
+                }
             }
         }
         catch (XmlException ex)
@@ -344,6 +537,8 @@ public sealed partial class WorkbookProcessor
 
     private static byte[] ReadAll(ZipArchiveEntry entry)
     {
+        if (entry.Length > Array.MaxLength)
+            throw new InvalidDataException(L.F("частина {0} завелика ({1} байт) для обробки цілою.", entry.FullName, entry.Length));
         using var stream = entry.Open();
         using var ms = new MemoryStream(entry.Length > 0 && entry.Length < int.MaxValue ? (int)entry.Length : 0);
         stream.CopyTo(ms);
