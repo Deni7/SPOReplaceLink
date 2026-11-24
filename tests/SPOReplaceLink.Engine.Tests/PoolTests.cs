@@ -23,9 +23,11 @@ public class PoolTests
         p.Retry.RequestAttempts = 2;
 
         long run = env.Create(RunModes.Apply, p);
-        Assert.Equal(RunStatuses.Completed, await env.RunAsync(run, 60));
-
+        string status = await env.RunAsync(run, 60);
         var files = env.Files(run);
+        Assert.True(status == RunStatuses.Completed, status + ": " + string.Join("; ",
+            files.Where(f => f.StatusCode != FileStatuses.Done).Select(f => $"{f.Path} {f.StatusCode} {f.Stage} app={f.App} attempts={f.Attempts} {f.Error}")));
+
         Assert.All(files, f => Assert.Equal(FileStatuses.Done, f.StatusCode));
         Assert.All(items, i => Assert.Equal(NewUrl, TestXlsx.HyperlinkOf(i.Content)));
         Assert.True(env.Apps.Created["app-b"].Throttle.Throttled429 > 0);

@@ -106,12 +106,18 @@ public sealed class AppPool
         return new AppPool(connections.Select(c => factory.Create(c, settings, tenant)).ToList(), tenant);
     }
 
+    public int Count => _apps.Length;
+
     public SpoApp? Find(string? name) => _apps.FirstOrDefault(a => a.Name == name);
 
     /// <summary>App for the next file: not blocked, not paused if possible, fewest files relative to its budget.</summary>
-    public SpoApp Acquire()
+    /// <param name="avoid">The app the previous attempt of the file failed on: another one is taken when there is one,
+    /// otherwise a throttled app whose pause has just ended would get the same file again and again.</param>
+    public SpoApp Acquire(string? avoid = null)
     {
         var candidates = _apps.Where(a => !a.Throttle.IsBlocked && !a.Budget.DailyExhausted).ToList();
+        if (avoid is not null && candidates.Any(a => a.Name != avoid))
+            candidates.RemoveAll(a => a.Name == avoid);
         if (candidates.Count == 0)
             candidates = _apps.Where(a => !a.Throttle.IsBlocked).ToList();
         if (candidates.Count == 0)

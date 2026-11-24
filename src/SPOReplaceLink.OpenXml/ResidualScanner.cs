@@ -112,13 +112,17 @@ public sealed class ResidualScanner
     /// than a match and its context, so a part of any size is scanned without holding it whole; a match counts in the
     /// window where it starts.
     /// </summary>
-    public IReadOnlyList<Residual> ScanBinary(string part, Stream stream, int chunkBytes = DefaultChunkBytes)
+    /// <param name="length">Size of the part when the stream cannot tell it (a zip entry): a small part gets a small window.</param>
+    public IReadOnlyList<Residual> ScanBinary(string part, Stream stream, int chunkBytes = DefaultChunkBytes, long? length = null)
     {
         var found = new HashSet<string>(StringComparer.Ordinal);
         var results = new List<Residual>();
         // Even sizes keep UTF-16 alignment of every window the same as in the whole part.
         int overlap = 2 * (_maxMatch + 2 * ContextChars + 8);
-        chunkBytes = Math.Max(2, chunkBytes & ~1);
+        length ??= stream.CanSeek ? stream.Length - stream.Position : null;
+        if (length is { } known && known < chunkBytes)
+            chunkBytes = (int)known + 1;
+        chunkBytes = Math.Max(2, (chunkBytes + 1) & ~1);
         var window = new byte[overlap + chunkBytes + overlap];
         long windowStart = 0;
         int filled = 0;

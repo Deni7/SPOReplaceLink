@@ -531,7 +531,11 @@ public sealed class RunEngine
 
     private async Task ProcessFileAsync(RunContext ctx, FileRow row, CancellationToken stop, CancellationToken abort)
     {
-        var app = ctx.Pool.Acquire();
+        // A repeated attempt goes to another app of the pool if the previous one failed on a transient error.
+        string? avoid = row.Attempts > 1 && ctx.Pool.Count > 1
+            ? _store.GetAttempts(row.Id).LastOrDefault(a => a.ErrorClass == "transient")?.App
+            : null;
+        var app = ctx.Pool.Acquire(avoid);
         var perf = ctx.Profile.Performance;
         string mode = ctx.Run.Mode;
         string ext = Path.GetExtension(row.Name).ToLowerInvariant();
