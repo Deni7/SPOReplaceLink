@@ -7,7 +7,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- Version of the app, the CLI and the installer (installer\build.ps1 reads it). -->
-    <Version>1.4.3</Version>
+    <Version>1.4.4</Version>
   </PropertyGroup>
 
   <!--
